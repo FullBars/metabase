@@ -25,6 +25,7 @@ import {
 import type { SettingKey } from "metabase-types/api";
 
 import { useSdkIframeEmbedSetupContext } from "../context";
+import { useIsDataAppMissing } from "../hooks/use-is-data-app-missing";
 
 import { SdkIframeEmbedPreview } from "./SdkIframeEmbedPreview";
 import S from "./SdkIframeEmbedSetup.module.css";
@@ -72,20 +73,22 @@ export const SdkIframeEmbedSetupContent = () => {
     settings,
   );
 
-  const isMissingDataApp =
-    settings.componentName === "metabase-data-app" && !settings.path;
   const isMissingResource =
-    isMissingDataApp ||
-    (isQuestionOrDashboard && !isLoading && (!resource || resource.archived));
+    isQuestionOrDashboard && !isLoading && (!resource || resource.archived);
 
   const siteUrl = useSetting("site-url");
   const isSiteUrlMismatched = !isSiteUrlMatchingCurrentOrigin(siteUrl);
+
+  const isDataAppMissing = useIsDataAppMissing(settings);
+  const canPreviewAndNavigate = allowPreviewAndNavigation && !isDataAppMissing;
 
   const nextStepButton = match(currentStep)
     .with("get-code", () => (
       <Button
         variant="filled"
-        disabled={resource?.enable_embedding === false}
+        disabled={
+          !canPreviewAndNavigate || resource?.enable_embedding === false
+        }
         onClick={handleEmbedDone}
         leftSection={<Icon name="check_filled" />}
       >
@@ -95,7 +98,7 @@ export const SdkIframeEmbedSetupContent = () => {
     .with("select-embed-options", () => (
       <Button
         variant="filled"
-        disabled={!allowPreviewAndNavigation || isMissingDataApp}
+        disabled={!canPreviewAndNavigate}
         onClick={handleNext}
       >
         {t`Get code`}
@@ -105,9 +108,9 @@ export const SdkIframeEmbedSetupContent = () => {
       <Button
         variant="filled"
         onClick={handleNext}
-        disabled={!allowPreviewAndNavigation || isMissingDataApp}
+        disabled={!canPreviewAndNavigate}
       >
-        {experience === "app" ? t`Get code` : t`Next`}
+        {experience === "data-app" ? t`Get code` : t`Next`}
       </Button>
     ));
 
@@ -126,10 +129,7 @@ export const SdkIframeEmbedSetupContent = () => {
 
           <Group className={S.Navigation} justify="space-between">
             {canGoBack && (
-              <Button
-                onClick={handleBack}
-                disabled={!allowPreviewAndNavigation || isMissingDataApp}
-              >
+              <Button onClick={handleBack} disabled={!canPreviewAndNavigate}>
                 {t`Back`}
               </Button>
             )}
@@ -145,7 +145,7 @@ export const SdkIframeEmbedSetupContent = () => {
 
           <SdkIframeGuestEmbedStatusBar />
 
-          {allowPreviewAndNavigation && !isMissingResource ? (
+          {canPreviewAndNavigate && !isMissingResource ? (
             isSiteUrlMismatched ? (
               <SdkIframeEmbedSiteUrlMismatchError siteUrl={siteUrl} />
             ) : (

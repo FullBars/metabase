@@ -2,10 +2,11 @@ import { PLUGIN_DATA_APPS } from "metabase/plugins";
 import { useListDataAppsQuery } from "metabase-enterprise/api";
 import { hasPremiumFeature } from "metabase-enterprise/settings";
 
-import { DataAppEmbedResourceCard } from "./data-studio/components/DataAppEmbedResourceCard";
 import { getDataStudioDataAppRoutes } from "./data-studio/routes";
 import { getRoutes, registerDataAppsPagePrefetch } from "./host/routes";
 import { DataAppsNavbarSection } from "./navbar/DataAppsNavbarSection";
+
+export { isDataAppOpenable } from "./utils";
 
 function useDataApps({ skip }: { skip: boolean }) {
   return useListDataAppsQuery(undefined, { skip });
@@ -17,7 +18,6 @@ function useDataApps({ skip }: { skip: boolean }) {
 export function initializePlugin() {
   if (hasPremiumFeature("data-apps")) {
     PLUGIN_DATA_APPS.isEnabled = true;
-    PLUGIN_DATA_APPS.EmbedResourceCard = DataAppEmbedResourceCard;
     PLUGIN_DATA_APPS.getRoutes = getRoutes;
     PLUGIN_DATA_APPS.getDataStudioRoutes = getDataStudioDataAppRoutes;
     PLUGIN_DATA_APPS.MainNavbarSection = DataAppsNavbarSection;
