@@ -4,6 +4,7 @@
    [metabase.api.macros :as api.macros]
    [metabase.api.routes.common :refer [+auth]]
    [metabase.api.util.handlers :as handlers]
+   [metabase.lib.schema.id :as lib.schema.id]
    [metabase.request.core :as request]
    [metabase.transforms-base.util :as transforms-base.u]
    [metabase.transforms-rest.api.transform-dag-run :as transforms.dag-run]
@@ -321,6 +322,15 @@
   (api/write-check :model/Transform id)
   (transforms-base.u/delete-target-table-by-id! id)
   nil)
+
+(api.macros/defendpoint :delete "/collection/:id" :- :nil
+  "Delete a transforms folder, its subfolders and every transform in them. With `delete-tables`, also drop their
+  output tables."
+  [{:keys [id]} :- [:map {:closed true}
+                    [:id ::lib.schema.id/collection]]
+   {:keys [delete-tables]} :- [:map {:closed true}
+                               [:delete-tables {:default false} [:maybe ms/BooleanValue]]]]
+  (transforms.core/delete-transforms-folder! (api/write-check :model/Collection id) (boolean delete-tables)))
 
 (api.macros/defendpoint :post "/:id/cancel" :- :nil
   "Cancel the current run for a given transform."

@@ -90,6 +90,21 @@
   [transform-id :- ::lib.schema.id/transform]
   (t2/delete! :model/Transform :id transform-id))
 
+(mu/defn transforms-in-collections
+  "The Transforms in the Collections with `collection-ids`."
+  [collection-ids :- [:sequential ::lib.schema.id/collection]]
+  (t2/select :model/Transform :collection_id [:in collection-ids]))
+
+(mu/defn collections
+  "The Collections with `collection-ids`."
+  [collection-ids :- [:sequential ::lib.schema.id/collection]]
+  (t2/select :model/Collection :id [:in collection-ids]))
+
+(mu/defn delete-collection!
+  "Delete the Collection with `collection-id`."
+  [collection-id :- ::lib.schema.id/collection]
+  (t2/delete! :model/Collection :id collection-id))
+
 ;;; ---------------------------------------------- Transform tags ----------------------------------------------
 
 (mu/defn tag
