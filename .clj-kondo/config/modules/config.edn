@@ -234,6 +234,7 @@
                     :model/Database
                     :model/DatabaseRouter
                     :model/Document
+                    :model/Field
                     :model/ModerationReview
                     :model/PermissionsGroup
                     :model/Pulse
@@ -693,7 +694,7 @@
            queries
            request
            util}
-   :model-imports #{:model/Card :model/Collection}}
+   :model-imports #{:model/Card :model/Collection :model/Table}}
 
   comments
   {:team "UX West"
@@ -2226,6 +2227,7 @@
                     :model/NativeQuerySnippet
                     :model/Notification
                     :model/Revision
+                    :model/Table
                     :model/Timeline
                     :model/User}}
 
@@ -3867,6 +3869,7 @@
    :model-imports #{:model/AuditLog
                     :model/Collection
                     :model/Dimension
+                    :model/Field
                     :model/Table
                     :model/User}}
 
@@ -4200,7 +4203,7 @@
            permissions
            query-processor
            util}
-   :model-imports #{:model/Card :model/User}}
+   :model-imports #{:model/Card :model/Table :model/User}}
 
   enterprise/permissions.impersonation
   {:team "Security Engineering"
