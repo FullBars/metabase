@@ -1,9 +1,9 @@
 (ns metabase-enterprise.transform-testing.runner
-  "Orchestrates a transform test run over the module's separated concerns. The runner is the only
-  namespace that resolves from the app db or owns the connection lifecycle; it hands ordinary
-  arguments to each concern (no marshaled plan object) and owns the HTTP decisions.
+  "Orchestrates a transform test run over the module's separated concerns. Callers hand the runner the transform and
+  the test, saved or not; the runner owns the connection lifecycle, hands ordinary arguments to each concern (no
+  marshaled plan object), and owns the HTTP decisions.
 
-    db           — app-db reads (transform, database)
+    db           — app-db reads (database)
     compile      — pure: source → SQL + referenced tables (once), then rewrites to temp tables
     validator    — pure: may this test run? every read faked, every rewritten query on temp tables
     executor     — the one place warehouse I/O lives: create/drop temp tables, run read-backs
@@ -11,7 +11,7 @@
 
   Flow — compile the source once, then thread that one result so the guard and the rewrite agree:
 
-    resolve (app-db)
+    resolve the database (app-db)
       → compile-source (pure)   : the transform's SQL + the tables it reads
       → name + rewrite (pure)   : a temp table per input, and the source reading them
       → validate (pure)         : reject a test that is incomplete, or whose queries would still
@@ -33,7 +33,6 @@
    [metabase.api.common :as api]
    [metabase.driver :as driver]
    [metabase.driver.util :as driver.u]
-   [metabase.lib.schema.id :as lib.schema.id]
    [metabase.lib.schema.metadata :as lib.schema.metadata]
    [metabase.sql-parsing.core :as sql-parsing]
    [metabase.transforms-base.schema :as transforms-base.schema]
@@ -238,15 +237,15 @@
      :compiled     compiled}))
 
 (mu/defn validate-transform-test :- :nil
-  "Refuse a test of the transform `transform-id` with these `inputs` and `expectations` unless it could run: the same
+  "Refuse a test of `transform` with these `inputs` and `expectations` unless it could run: the same
   checks a run makes, up to but not including the connection.
 
   Returns nil when there is nothing to refuse, and otherwise throws the refusal the run would have thrown, so a test
   is turned away as it is authored rather than only when somebody runs it."
-  [transform-id :- ::lib.schema.id/transform
+  [transform    :- ::transform
    inputs       :- ::transform-testing.schema/inputs
    expectations :- ::transform-testing.schema/expectations]
-  (validated-plan (api/check-404 (transform-testing.db/transform transform-id)) inputs expectations)
+  (validated-plan transform inputs expectations)
   nil)
 
 (mu/defn run-transform-test! :- ::transform-testing.schema/run-result

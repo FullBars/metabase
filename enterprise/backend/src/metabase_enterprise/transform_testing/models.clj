@@ -5,11 +5,14 @@
    [metabase.api.common :as api]
    [metabase.audit-app.core :as audit-app]
    [metabase.events.core :as events]
+   [metabase.lib-be.core :as lib-be]
    [metabase.lib.core :as lib]
+   [metabase.lib.schema.id :as lib.schema.id]
    [metabase.models.interface :as mi]
    [metabase.models.serialization :as serdes]
    [metabase.permissions.core :as perms]
    [metabase.premium-features.core :refer [defenterprise]]
+   [metabase.query-permissions.core :as query-perms]
    [metabase.remote-sync.core :as remote-sync]
    [metabase.revisions.models.revision :as revision]
    [metabase.transforms-base.interface :as transforms-base.i]
@@ -65,27 +68,57 @@
                       ::transform-testing.schema/transform-test.create]]
   (select-keys transform-test [:name :description :inputs :expectations]))
 
+(mu/defn saved-transform-content :- [:maybe ::transforms.schema/transform.content]
+  "The content of the Transform with `transform-id`, or nil when it is missing or has no source Database."
+  [transform-id :- ::lib.schema.id/transform]
+  (when-let [transform (transform-testing.db/transform transform-id)]
+    (when (transforms-base.i/source-db-id transform)
+      (transforms.u/->content transform))))
+
+(defn- source-sql
+  "A native query on the source Database of `transform`, standing in for the SQL a test of it runs there."
+  [transform]
+  (when-let [database-id (transforms-base.i/source-db-id transform)]
+    (lib/native-query (lib-be/application-database-metadata-provider database-id) "SELECT 1")))
+
+(mu/defn can-run-test? :- :boolean
+  "Whether the current user may run a test of `transform`, which needs what a saved native question on its source
+  Database needs."
+  [transform :- ::transforms.schema/transform.content]
+  (boolean
+   (or api/*is-superuser?*
+       (and (transforms.u/source-readable? transform)
+            (when-let [query (source-sql transform)]
+              (query-perms/has-perm-for-query? query :perms/view-data (query-perms/required-perms-for-query query)))))))
+
 (mu/defn can-create-test? :- :boolean
-  "Whether the current user may create `_transform-test` of `transform`, both saved or not: the test runs its own SQL
-  on the source database of the transform."
+  "Whether the current user may write the SQL of `_transform-test` of `transform`, which needs what an ad hoc native
+  query and a transform on its source Database need."
   [transform       :- ::transforms.schema/transform.content
    _transform-test :- ::transform-testing.schema/transform-test.content]
-  (let [database-id (transforms-base.i/source-db-id transform)]
-    (boolean
-     (and database-id
-          (transforms.u/source-readable? transform)
-          (perms/has-db-transforms-permission? api/*current-user-id* database-id)
-          (= :query-builder-and-native
-             (perms/full-database-permission-for-user api/*current-user-id* :perms/create-queries database-id))))))
+  (boolean
+   (or api/*is-superuser?*
+       (and (can-run-test? transform)
+            (perms/has-db-transforms-permission? api/*current-user-id* (transforms-base.i/source-db-id transform))
+            (query-perms/can-run-query? (source-sql transform))))))
+
+(defn can-run-saved-test?
+  "Whether the current user may run the saved `transform-test`, checked against the Transform its `:transform_id`
+  names."
+  [transform-test]
+  (boolean
+   (or api/*is-superuser?*
+       (some-> (saved-transform-content (:transform_id transform-test)) can-run-test?))))
 
 (defn- can-save-test?
-  "Whether the current user may save `transform-test`, checked against the Transform its `:transform_id` names."
+  "Whether the current user may save or delete `transform-test`, checked against the Transform its `:transform_id`
+  names, while remote sync allows editing transforms."
   [transform-test]
   (boolean
    (and (remote-sync/transforms-editable?)
-        (some-> (transform-testing.db/transform (:transform_id transform-test))
-                transforms.u/->content
-                (can-create-test? (->content transform-test))))))
+        (or api/*is-superuser?*
+            (some-> (saved-transform-content (:transform_id transform-test))
+                    (can-create-test? (->content transform-test)))))))
 
 (defmethod mi/can-read? :model/TransformTest
   ([instance]

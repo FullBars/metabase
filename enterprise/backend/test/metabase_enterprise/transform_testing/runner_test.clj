@@ -20,7 +20,7 @@
     {:schema schema :name name}))
 
 (defn- with-people-transform
-  "Call `f` with a transform selecting `id, name` from the people table, whose target is
+  "Call `f` with the schema and name of the people table and a transform selecting `id, name` from it into
   `people_summary` in the same schema."
   [f]
   (let [mp                            (mt/metadata-provider)

@@ -111,6 +111,21 @@
             (is (not (mi/can-read? reloaded)))
             (is (not (mi/can-write? reloaded)))))))))
 
+(deftest can-read-transform-with-nil-source-database-test
+  (testing "superusers can read transforms whose stored source query has no database, others cannot"
+    (mt/with-premium-features #{:transforms-basic :hosting}
+      (mt/with-temp [:model/Transform {transform-id :id}
+                     {:name   "Orphan Transform"
+                      :source {:type  "query"
+                               :query {:lib/type :mbql/query
+                                       :database nil
+                                       :stages   [{:lib/type :mbql.stage/native :native "SELECT 1"}]}}}]
+        (let [stored (t2/select-one :model/Transform :id transform-id)]
+          (mt/with-current-user (mt/user->id :crowberto)
+            (is (mi/can-read? stored)))
+          (mt/with-current-user (mt/user->id :rasta)
+            (is (not (mi/can-read? stored)))))))))
+
 (mt/when-ee-evailable
  (deftest native-transform-requires-query-builder-and-native-test
    (testing "Writing a native-query transform requires \"Query builder and native\" on the source database, even if the

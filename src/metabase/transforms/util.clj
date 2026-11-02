@@ -256,7 +256,7 @@
      (str/starts-with? (u/lower-case-en table-name) driver.u/transform-temp-table-prefix))))
 
 (mu/defn ->content :- ::transforms.schema/transform.content
-  "The part of the saved `transform` that a client writes."
+  "What the saved `transform` computes and where it writes, as a client writes it."
   [transform :- ::transforms.schema/transform]
   (select-keys transform [:name :description :source :target]))
 
@@ -267,8 +267,8 @@
    [:model/Table    [:maybe [:map-of ::lib.schema.id/table (ms/InstanceOf :model/Table)]]]])
 
 (mu/defn source-readable? :- :boolean
-  "Whether the current user may query the source of `transform`, saved or not, looking up its Databases and Tables in
-  `models-cache` when one is given."
+  "Whether the current user may read `transform`, saved or not: its kind of transform is enabled, and the user is a
+  superuser or a data analyst who may query its source. Databases and Tables come from `models-cache` when given."
   ([transform :- ::transforms.schema/transform.content]
    (source-readable? transform nil))
   ([transform    :- ::transforms.schema/transform.content

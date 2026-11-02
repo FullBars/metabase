@@ -57,9 +57,9 @@
   [_route-params
    _query-params
    {:keys [transform_id inputs expectations] :as body} :- ::transform-testing.schema/transform-test.create]
-  (api/check-404 (transform-testing.db/transform transform_id))
-  (api/create-check :model/TransformTest body)
-  (refusing #(transform-testing.runner/validate-transform-test transform_id inputs expectations))
+  (let [transform (api/check-404 (transform-testing.db/transform transform_id))]
+    (api/create-check :model/TransformTest body)
+    (refusing #(transform-testing.runner/validate-transform-test transform inputs expectations)))
   (transform-testing.db/insert-transform-test! (assoc body :creator_id api/*current-user-id*)))
 
 (api.macros/defendpoint :put "/:id" :- ::transform-testing.schema/transform-test
@@ -68,14 +68,15 @@
                     [:id ms/PositiveInt]]
    _query-params
    {:keys [transform_id] :as body} :- ::transform-testing.schema/transform-test.update]
-  (let [transform-test (api/write-check (transform-testing.db/transform-test id))]
+  (let [transform-test (api/write-check (transform-testing.db/transform-test id))
+        updated        (merge transform-test body)
+        transform      (when (some #(contains? body %) [:transform_id :inputs :expectations])
+                         (api/check-404 (transform-testing.db/transform (:transform_id updated))))]
     (when transform_id
-      (api/check-404 (transform-testing.db/transform transform_id))
-      (api/create-check :model/TransformTest (merge transform-test body)))
+      (api/create-check :model/TransformTest updated))
+    (when transform
+      (refusing #(transform-testing.runner/validate-transform-test transform (:inputs updated) (:expectations updated))))
     (when (seq body)
-      (when (some #(contains? body %) [:transform_id :inputs :expectations])
-        (let [{:keys [transform_id inputs expectations]} (merge transform-test body)]
-          (refusing #(transform-testing.runner/validate-transform-test transform_id inputs expectations))))
       (transform-testing.db/update-transform-test! id body)))
   (transform-testing.db/transform-test id))
 
@@ -101,7 +102,8 @@
 
 (api.macros/defendpoint :post "/run" :- ::transform-testing.schema/run-result
   "Run a transform test that is not saved, of a transform that need not be saved either, as `POST /:id/run` runs a
-  saved one."
+  saved one. Needs what creating the test needs: ad hoc native query access and transforms permission on the
+  transform's source database."
   [_route-params
    _query-params
    {:keys [transform test]} :- [:map {:closed true}
@@ -135,7 +137,7 @@
      :total  (transform-testing.db/transform-test-run-count filters)}))
 
 (api.macros/defendpoint :post "/:id/run" :- ::transform-testing.schema/run-result
-  "Run a transform test.
+  "Run a transform test. Needs what viewing a saved native question on the transform's source database needs.
 
   A 200 means the run happened: `:status` is then `passed` or `failed`, and every expectation
   reports what it found — including one that could not be evaluated, which comes back as that
@@ -146,7 +148,8 @@
   [{:keys [id]} :- [:map {:closed true}
                     [:id ms/PositiveInt]]]
   (let [transform-test (api/read-check (transform-testing.db/transform-test id))
-        transform      (api/read-check (transform-testing.db/transform (:transform_id transform-test)))]
+        _              (api/check-403 (transform-testing.models/can-run-saved-test? transform-test))
+        transform      (api/check-404 (transform-testing.db/transform (:transform_id transform-test)))]
     (refusing #(transform-testing.runner/run-transform-test! transform transform-test))))
 
 (def ^{:arglists '([request respond raise])} routes

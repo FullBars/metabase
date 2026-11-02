@@ -3,7 +3,9 @@
    [clojure.test :refer :all]
    [metabase.lib.core :as lib]
    [metabase.lib.metadata :as lib.metadata]
+   [metabase.permissions.models.data-permissions :as data-perms]
    [metabase.permissions.models.permissions-group :as perms-group]
+   [metabase.permissions.test-util :as perms.tu]
    [metabase.test :as mt]
    [toucan2.core :as t2]))
 
@@ -203,11 +205,11 @@
                   (is (some #{test-id} (map :id (mt/user-http-request :lucky :get 200 "ee/transform-test"))))
                   (mt/user-http-request :lucky :get 200 path)
                   (is (= "passed" (:status (mt/user-http-request :lucky :post 200 (str path "/run")))))))
-              (testing "writing or running test SQL needs transforms permission on source database"
+              (testing "saving, deleting, or running unsaved test SQL needs transforms permission on source database"
                 (mt/with-db-perms-for-group! (perms-group/all-users) (mt/id) {:perms/transforms     :no
                                                                               :perms/create-queries :query-builder-and-native}
                   (refused-writes :lucky)))
-              (testing "writing or running test SQL needs native access to source database"
+              (testing "saving, deleting, or running unsaved test SQL needs native access to source database"
                 (mt/with-db-perms-for-group! (perms-group/all-users) (mt/id) {:perms/transforms     :yes
                                                                               :perms/create-queries :query-builder}
                   (refused-writes :lucky)))
@@ -219,6 +221,53 @@
             (is (t2/exists? :model/TransformTest :id test-id))
             (finally
               (t2/delete! :model/TransformTestRun :initiated_by (mt/user->id :lucky)))))))))
+
+(defn- people-id-transform
+  "An MBQL transform selecting `ID` from `PEOPLE` into `PEOPLE_SUMMARY`."
+  []
+  (let [mp (mt/metadata-provider)]
+    {:source {:type  "query"
+              :query (-> (lib/query mp (lib.metadata/table mp (mt/id :people)))
+                         (lib/with-fields [(lib.metadata/field mp (mt/id :people :id))]))}
+     :target {:type "table" :schema "PUBLIC" :name "PEOPLE_SUMMARY" :database (mt/id)}}))
+
+(def ^:private orders-input
+  [{:table  {:schema "PUBLIC" :name "PEOPLE"}
+    :format "sql"
+    :sql    "SELECT ID FROM PUBLIC.ORDERS WHERE ID <= 3"}])
+
+(deftest saved-run-needs-unrestricted-view-data-test
+  (testing "readers who may not run native SQL on source database cannot run its saved tests"
+    (with-transforms-enabled
+      (mt/with-temp [:model/Transform     {transform-id :id} (people-id-transform)
+                     :model/TransformTest {test-id :id}      {:transform_id transform-id
+                                                              :inputs       orders-input
+                                                              :expectations expectations}]
+        (mt/with-data-analyst-role! (mt/user->id :lucky)
+          (perms.tu/with-no-data-perms-for-all-users!
+            (perms.tu/with-perms-for-group-and-tables! (perms-group/all-users)
+              {(mt/id :people) {:perms/view-data :unrestricted :perms/create-queries :query-builder}
+               (mt/id :orders) {:perms/view-data :blocked :perms/create-queries :no}}
+              (mt/user-http-request :lucky :get 200 (str "ee/transform-test/" test-id))
+              (mt/user-http-request :lucky :post 403 (str "ee/transform-test/" test-id "/run")))))))))
+
+(deftest adhoc-run-respects-tables-blocked-by-other-group-test
+  (testing "unsaved tests cannot read tables another group of caller blocks"
+    (with-transforms-enabled
+      (mt/with-data-analyst-role! (mt/user->id :lucky)
+        (perms.tu/with-no-data-perms-for-all-users!
+          (perms.tu/with-restored-data-perms-for-group! (:id (perms-group/all-users))
+            (mt/with-temp [:model/PermissionsGroup           {group-id :id} {}
+                           :model/PermissionsGroupMembership _              {:group_id group-id :user_id (mt/user->id :lucky)}]
+              (data-perms/set-database-permission! (perms-group/all-users) (mt/id) :perms/view-data :unrestricted)
+              (data-perms/set-database-permission! (perms-group/all-users) (mt/id) :perms/create-queries :query-builder-and-native)
+              (data-perms/set-database-permission! (perms-group/all-users) (mt/id) :perms/transforms :yes)
+              (data-perms/set-table-permission! (perms-group/all-users) (mt/id :orders) :perms/view-data :legacy-no-self-service)
+              (data-perms/set-database-permission! group-id (mt/id) :perms/view-data :unrestricted)
+              (data-perms/set-table-permission! group-id (mt/id :orders) :perms/view-data :blocked)
+              (mt/user-http-request :lucky :post 403 "ee/transform-test/run"
+                                    {:transform (assoc (people-id-transform) :name "adhoc")
+                                     :test      {:name "adhoc" :inputs orders-input :expectations expectations}}))))))))
 
 (deftest list-runs-test
   (with-transforms-enabled
