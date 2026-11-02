@@ -109,7 +109,6 @@
    [:coercion_strategy  {:optional true} [:maybe [:or :keyword :string]]]
    [:caveats            {:optional true} [:maybe :string]]
    [:points_of_interest {:optional true} [:maybe :string]]
-   [:nfc_path           {:optional true} [:maybe [:sequential [:or :string :keyword]]]]
    [:json_unfolding     {:optional true} [:maybe :boolean]]
    [:settings           {:optional true} [:maybe ::field-user-settings.settings]]
    [:data_sensitivity   {:optional true} [:maybe [:or :keyword :string]]]
@@ -168,8 +167,6 @@
    [:collection_id           {:optional true} [:maybe ::lib.schema.id/collection]]
    [:description_set         {:optional true} :boolean]
    [:visibility_type_set     {:optional true} :boolean]
-   [:caveats_set             {:optional true} :boolean]
-   [:points_of_interest_set  {:optional true} :boolean]
    [:data_layer_set          {:optional true} :boolean]
    [:data_source_set         {:optional true} :boolean]])
 

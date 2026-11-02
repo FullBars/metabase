@@ -4,8 +4,7 @@
    [metabase.permissions.published-tables :as published-tables]
    [metabase.permissions.schema :as permissions.schema]
    [metabase.util.honey-sql-2 :as h2x]
-   [metabase.util.malli :as mu]
-   [metabase.warehouse-schema-overlay.core :as warehouse-schema-overlay])
+   [metabase.util.malli :as mu])
   (:import
    (clojure.lang PersistentVector)))
 
@@ -139,7 +138,7 @@
   "The plain `metabase_table`, aliased `mt`: permission queries read only sync-owned columns, and the overlay's
   derived table is costly here and breaks on MariaDB."
   []
-  (warehouse-schema-overlay/table-query {:alias :mt, :user-settings? false}))
+  [:metabase_table :mt])
 
 (mu/defn visible-table-filter-select
   "Selects a column from tables that are visible to the provided user given a mapping of permission types to the required value or the required

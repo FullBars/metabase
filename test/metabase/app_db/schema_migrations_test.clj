@@ -45,7 +45,6 @@
    [metabase.util.encryption :as encryption]
    [metabase.util.encryption-test :as encryption-test]
    [metabase.util.json :as json]
-   [metabase.warehouse-schema-overlay.core :as warehouse-schema-overlay]
    [toucan2.core :as t2])
   (:import
    (liquibase Scope)
@@ -3537,9 +3536,10 @@
             visible         (insert-table! "visible" true nil "internal")
             unpublished     (insert-table! "unpublished" false "hidden" "hidden")
             user-visibility (fn [table-id]
-                              (t2/select-one-fn :v [:metabase_table
-                                                    [(warehouse-schema-overlay/table-user-visibility-type :metabase_table) :v]]
-                                                {:where [:= :metabase_table.id table-id]}))]
+                              (let [settings (t2/select-one :metabase_table_user_settings :table_id table-id)]
+                                (if (:visibility_type_set settings)
+                                  (:visibility_type settings)
+                                  (t2/select-one-fn :visibility_type :metabase_table :id table-id))))]
         (migrate!)
         (testing "the backfill moves a published table's hidden or technical visibility into its settings row"
           (doseq [[table-id visibility-type] [[hidden "hidden"] [technical "technical"]]]
@@ -3557,6 +3557,87 @@
         (testing "the visibility_type users see is unchanged by the migration"
           (is (= {hidden "hidden" technical "technical" cruft "cruft" visible nil unpublished "hidden"}
                  (into {} (map (juxt identity user-visibility)) [hidden technical cruft visible unpublished]))))))))
+
+(deftest move-user-settings-into-metabase-table-and-field-test
+  (testing "ceygl0, ziqcir, q7m2xv, h4ptnw: user-set values move into metabase_table and metabase_field, and the
+           settings columns that carry nothing any more are dropped"
+    (impl/test-migrations ["ceygl0" "h4ptnw"] [migrate!]
+      (let [db-id         (t2/insert-returning-pk! :metabase_database {:name       "Move User Settings Test DB"
+                                                                       :engine     "h2"
+                                                                       :created_at :%now
+                                                                       :updated_at :%now
+                                                                       :details    "{}"})
+            insert-table! (fn [table-name]
+                            (t2/insert-returning-pk! :metabase_table {:active          true
+                                                                      :db_id           db-id
+                                                                      :name            table-name
+                                                                      :display_name    "Synced Name"
+                                                                      :description     "synced comment"
+                                                                      :visibility_type "cruft"
+                                                                      :data_layer      "internal"
+                                                                      :field_order     "database"
+                                                                      :created_at      :%now
+                                                                      :updated_at      :%now}))
+            edited        (insert-table! "edited")
+            untouched     (insert-table! "untouched")
+            insert-field! (fn [table-id field-name]
+                            (t2/insert-returning-pk! :metabase_field {:table_id      table-id
+                                                                      :name          field-name
+                                                                      :display_name  "Synced Field"
+                                                                      :description   "synced comment"
+                                                                      :semantic_type "type/Category"
+                                                                      :active        true
+                                                                      :base_type     "type/Text"
+                                                                      :database_type "TEXT"
+                                                                      :created_at    :%now
+                                                                      :updated_at    :%now}))
+            edited-field  (insert-field! edited "edited")
+            plain-field   (insert-field! edited "plain")]
+        (t2/insert! :metabase_table_user_settings {:table_id        edited
+                                                   :display_name    "User Name"
+                                                   :description     nil
+                                                   :description_set true
+                                                   :caveats         "user caveats"
+                                                   :caveats_set     true
+                                                   :data_layer      "final"
+                                                   :data_layer_set  true
+                                                   :field_order     "custom"
+                                                   :is_published    true})
+        (t2/insert! :metabase_field_user_settings {:field_id          edited-field
+                                                   :display_name      "User Field"
+                                                   :description       nil
+                                                   :description_set   true
+                                                   :effective_type    "type/Integer"
+                                                   :coercion_strategy "Coercion/String->Integer"
+                                                   :custom_position   3})
+        (migrate!)
+        (testing "a Table gets the values its user set, user-set NULLs included, and keeps the ones nobody set"
+          (is (=? {:display_name    "User Name"
+                   :description     nil
+                   :caveats         "user caveats"
+                   :data_layer      "final"
+                   :field_order     "custom"
+                   :is_published    true
+                   :visibility_type "cruft"}
+                  (t2/select-one :metabase_table :id edited))))
+        (testing "a Table without settings is untouched"
+          (is (=? {:display_name "Synced Name" :description "synced comment" :field_order "database"}
+                  (t2/select-one :metabase_table :id untouched))))
+        (testing "a Field gets the values its user set, and keeps the semantic type nobody set"
+          (is (=? {:display_name      "User Field"
+                   :description       nil
+                   :semantic_type     "type/Category"
+                   :effective_type    "type/Integer"
+                   :coercion_strategy "Coercion/String->Integer"
+                   :custom_position   3}
+                  (t2/select-one :metabase_field :id edited-field))))
+        (testing "a Field without settings is untouched"
+          (is (=? {:display_name "Synced Field" :description "synced comment"}
+                  (t2/select-one :metabase_field :id plain-field))))
+        (testing "the settings columns that no longer carry information are gone"
+          (is (not-any? #{:caveats_set :points_of_interest_set}
+                        (keys (t2/select-one :metabase_table_user_settings :table_id edited))))
+          (is (not (contains? (t2/select-one :metabase_field_user_settings :field_id edited-field) :nfc_path))))))))
 
 (deftest glossary-entity-id-backfill-test
   (testing "v64.2026-09-11: glossary.entity_id is added, backfilled for existing rows, NOT NULL and unique"

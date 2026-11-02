@@ -7,8 +7,7 @@
    [metabase.models.interface :as mi]
    [metabase.permissions.core :as perms]
    [metabase.premium-features.core :refer [defenterprise]]
-   [metabase.util.honey-sql-2 :as h2x]
-   [metabase.warehouse-schema-overlay.core :as warehouse-schema-overlay]))
+   [metabase.util.honey-sql-2 :as h2x]))
 
 (defenterprise user-published-table-permission
   "Returns :query-builder permission if table is published and user has collection access.
@@ -52,7 +51,7 @@
     {:select [[:mt.id :id]
               [(h2x/literal :perms/create-queries) :perm_type]
               [(h2x/literal :query-builder) :perm_value]]
-     :from   [(warehouse-schema-overlay/table-query {:alias :mt})]
+     :from   [[:metabase_table :mt]]
      :where  (cond-> [:and
                       [:= :mt.is_published true]
                       (collection/visible-collection-filter-clause

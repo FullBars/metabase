@@ -162,9 +162,8 @@
                   [:coercion_strategy  {:optional true} [:maybe ms/CoercionStrategyKeywordOrString]]
                   [:visibility_type    {:optional true} [:maybe FieldVisibilityType]]
                   [:data_sensitivity   {:optional true} [:maybe FieldDataSensitivity]]
-                  [:has_field_values   {:optional true} [:maybe ::lib.schema.metadata/column.has-field-values]]
+                  [:has_field_values   {:optional true} ::lib.schema.metadata/column.has-field-values]
                   [:settings           {:optional true} [:maybe ms/VisualizationSettings]]
-                  [:nfc_path           {:optional true} [:maybe [:sequential ms/NonBlankString]]]
                   [:json_unfolding     {:optional true} [:maybe :boolean]]]]
   (let [field             (-> (warehouse-schema-rest.db/field id)
                               api/write-check
@@ -200,7 +199,7 @@
       (when removed-fk?
         (clear-dimension-on-fk-change! field))
       (clear-dimension-on-type-change! field (:base_type field) new-semantic-type)
-      (schema.field-user-settings/upsert-user-settings
+      (schema.field-user-settings/upsert-field-user-settings!
        field
        (cond-> body
          (or removed-fk? (contains? body :fk_target_field_id))

@@ -1,15 +1,17 @@
 (ns metabase.warehouse-schema.models.table-user-settings
   (:require
+   [metabase.driver :as driver]
    [metabase.lib.schema.id :as lib.schema.id]
    [metabase.models.interface :as mi]
    [metabase.models.serialization :as serdes]
    [metabase.util :as u]
    [metabase.util.malli :as mu]
-   [metabase.warehouse-schema-overlay.core :as warehouse-schema-overlay]
    [metabase.warehouse-schema.db :as warehouse-schema.db]
+   [metabase.warehouse-schema.humanization :as humanization]
    [metabase.warehouse-schema.models.field-user-settings :as field-user-settings]
    [metabase.warehouse-schema.models.table :as table]
    [metabase.warehouse-schema.schema :as warehouse-schema.schema]
+   [metabase.warehouse-schema.user-settings :as user-settings]
    [methodical.core :as methodical]
    [toucan2.core :as t2]))
 
@@ -34,7 +36,6 @@
 (doto :model/TableUserSettings
   (derive :metabase/model)
   (derive :hook/timestamped?)
-  (derive :hook/search-index)
   (derive :hook/dependencies))
 
 (methodical/defmethod t2/primary-keys :model/TableUserSettings [_model] [:table_id])
@@ -64,7 +65,7 @@
                  (and (contains? effective column) (not (contains? explicit flag)))
                  (assoc flag true)))
              settings
-             warehouse-schema-overlay/table-user-settings-flags))
+             user-settings/table-set-flags))
 
 (defn- enforce-invariants
   "Validate `explicit`, complete its two-column pairs and set its flags, merged into `settings`."
@@ -78,8 +79,8 @@
 (defn- delete-when-empty!
   "Delete `settings` when it holds no user value and no true flag, returning it either way."
   [settings]
-  (when (and (every? #(nil? (get settings %)) warehouse-schema-overlay/user-settable-table-columns)
-             (not-any? #(get settings %) (vals warehouse-schema-overlay/table-user-settings-flags)))
+  (when (and (every? #(nil? (get settings %)) user-settings/user-settable-table-columns)
+             (not-any? #(get settings %) (vals user-settings/table-set-flags)))
     (warehouse-schema.db/delete-table-user-settings! (:table_id settings)))
   settings)
 
@@ -99,28 +100,79 @@
   [settings]
   (delete-when-empty! settings))
 
-(mu/defn upsert-user-settings
-  "Record the user-settable Table columns present in `settings` as the user values of `table`."
+(defn- system-value
+  "The value `table` has for `column` when no user set it."
+  [table column]
+  (case column
+    :display_name            (humanization/name->human-readable-name (:name table))
+    :field_order             (driver/default-field-order (warehouse-schema.db/database-engine (:db_id table)))
+    :show_in_getting_started false
+    :is_published            false
+    :data_authority          :unconfigured
+    :data_layer              :internal
+    nil))
+
+(defn- without-derived-half
+  "Drop from `changes` the half of a `visibility_type`/`data_layer` pair the Table's own update derives from the other."
+  [{:keys [visibility_type data_layer] :as changes}]
+  (if (and (contains? changes :visibility_type) (contains? changes :data_layer))
+    (if (= (some-> data_layer keyword) (table/visibility-type->data-layer (some-> visibility_type keyword)))
+      (dissoc changes :data_layer)
+      (dissoc changes :visibility_type))
+    changes))
+
+(mu/defn- write-user-values!
+  "Write into the Table with `table-id` the values its settings say a user set, and the system values of the columns
+  in `previously-set` no user sets any more."
+  [table-id       :- ::lib.schema.id/table
+   previously-set :- [:set (into [:enum] user-settings/user-settable-table-columns)]]
+  (let [table    (warehouse-schema.db/table table-id)
+        settings (warehouse-schema.db/table-user-settings table-id)
+        user-set (user-settings/user-set-table-columns settings)
+        values   (merge (into {} (map (juxt identity (partial system-value table))) (remove user-set previously-set))
+                        (select-keys settings user-set))
+        same?    (fn [x y] (= (cond-> x (keyword? x) u/qualified-name) (cond-> y (keyword? y) u/qualified-name)))
+        changes  (into {} (remove (fn [[column value]] (same? value (get table column)))) values)]
+    (when (seq changes)
+      (warehouse-schema.db/update-table! table-id (without-derived-half changes)))))
+
+(mu/defn upsert-table-user-settings!
+  "Record the user-settable Table columns present in `settings` as the user values of `table`, in its settings and its
+  row; a nil for a column without a set flag unsets it."
   [{:keys [id]} :- ::warehouse-schema.schema/table
    settings     :- ::warehouse-schema.schema/table.update]
-  (let [settings (u/select-keys-when settings :present warehouse-schema-overlay/user-settable-table-columns)]
+  (let [settings (u/select-keys-when settings :present user-settings/user-settable-table-columns)]
     (when (seq settings)
-      (if (warehouse-schema.db/table-user-settings-exist? id)
-        (warehouse-schema.db/update-table-user-settings! id (with-set-flags settings settings settings))
-        (warehouse-schema.db/insert-table-user-settings! (assoc settings :table_id id))))))
+      (t2/with-transaction [_]
+        (let [existing (warehouse-schema.db/table-user-settings id)]
+          (if existing
+            (warehouse-schema.db/update-table-user-settings! id (with-set-flags settings settings settings))
+            (warehouse-schema.db/insert-table-user-settings! (assoc settings :table_id id)))
+          (write-user-values! id (user-settings/user-set-table-columns existing)))))))
 
-(mu/defn upsert-user-settings-for-tables!
-  "[[upsert-user-settings]] for every Table in `table-ids`, in one statement per kind."
+(mu/defn upsert-table-user-settings-for-tables!
+  "[[upsert-table-user-settings!]] for every Table in `table-ids`, with one statement per kind for the settings and one for
+  the rows."
   [table-ids :- [:set ::lib.schema.id/table]
    settings  :- ::warehouse-schema.schema/table.update]
-  (let [settings (u/select-keys-when settings :present warehouse-schema-overlay/user-settable-table-columns)]
+  (let [settings (u/select-keys-when settings :present user-settings/user-settable-table-columns)]
     (when (and (seq settings) (seq table-ids))
-      (let [existing (warehouse-schema.db/table-ids-with-user-settings table-ids)]
-        (when-let [missing (not-empty (remove existing table-ids))]
-          (warehouse-schema.db/insert-table-user-settings! (mapv #(assoc settings :table_id %) missing)))
-        (when (seq existing)
-          (warehouse-schema.db/update-table-user-settings-for-tables!
-           existing (with-set-flags settings settings settings)))))))
+      (t2/with-transaction [_]
+        (let [existing (warehouse-schema.db/table-ids-with-user-settings table-ids)]
+          (when-let [missing (not-empty (remove existing table-ids))]
+            (warehouse-schema.db/insert-table-user-settings! (mapv #(assoc settings :table_id %) missing)))
+          (when (seq existing)
+            (warehouse-schema.db/update-table-user-settings-for-tables!
+             existing (with-set-flags settings settings settings))))
+        (if (some #{:display_name :field_order} (keys settings))
+          (doseq [table-id table-ids]
+            (write-user-values! table-id (set (keys settings))))
+          (warehouse-schema.db/update-tables!
+           table-ids
+           (into {}
+                 (map (fn [[column value]]
+                        [column (if (and (nil? value) (not (user-settings/table-set-flags column))) (system-value nil column) value)]))
+                 settings)))))))
 
 (defn- valid-field-order?
   "Field ordering is valid if all the fields from a given table are present and only from that table."
@@ -133,22 +185,31 @@
   [table field-order]
   {:pre [(valid-field-order? table field-order)]}
   (t2/with-transaction [_]
-    (upsert-user-settings table {:field_order :custom})
+    (upsert-table-user-settings! table {:field_order :custom})
     (field-user-settings/set-custom-positions! (zipmap field-order (range)))
     (table/update-field-positions! (warehouse-schema.db/table (u/the-id table)))))
 
-(mu/defn unset-user-settings!
-  "Drop the user values of the Table columns `ks` for `table`."
+(mu/defn unset-table-user-settings!
+  "Drop the user values of the Table columns `ks` for `table`, putting their system values back in its row."
   [{:keys [id]} :- ::warehouse-schema.schema/table
-   ks           :- [:sequential (into [:enum] warehouse-schema-overlay/user-settable-table-columns)]]
-  (when (warehouse-schema.db/table-user-settings-exist? id)
-    (warehouse-schema.db/update-table-user-settings!
-     id
-     (into {} (mapcat (fn [k]
-                        (cond-> [[k nil]]
-                          (warehouse-schema-overlay/table-user-settings-flags k)
-                          (conj [(warehouse-schema-overlay/table-user-settings-flags k) false]))))
-           ks))))
+   ks           :- [:sequential (into [:enum] user-settings/user-settable-table-columns)]]
+  (when-let [existing (warehouse-schema.db/table-user-settings id)]
+    (t2/with-transaction [_]
+      (warehouse-schema.db/update-table-user-settings!
+       id
+       (into {} (mapcat (fn [k]
+                          (cond-> [[k nil]]
+                            (user-settings/table-set-flags k) (conj [(user-settings/table-set-flags k) false]))))
+             ks))
+      (write-user-values! id (user-settings/user-set-table-columns existing)))))
+
+(mu/defn delete-table-user-settings!
+  "Delete the settings of the Tables with `table-ids`, putting the system values of what they set back in their rows."
+  [table-ids :- [:sequential ::lib.schema.id/table]]
+  (t2/with-transaction [_]
+    (doseq [settings (warehouse-schema.db/table-user-settings-for-tables table-ids)]
+      (warehouse-schema.db/delete-table-user-settings! (:table_id settings))
+      (write-user-values! (:table_id settings) (user-settings/user-set-table-columns settings)))))
 
 ;;; ------------------------------------------------- Serialization -------------------------------------------------
 
@@ -172,27 +233,26 @@
 (def ^:private legacy-fields
   "The FieldUserSettings a settings file carried before they got files of their own."
   (serdes/nested :model/FieldUserSettings :table_id
-                 {:delete-children! warehouse-schema.db/delete-field-user-settings-for-table!}))
+                 {:delete-children! field-user-settings/delete-field-user-settings-for-table!}))
 
 (defmethod serdes/load-one! "TableUserSettings" [ingested maybe-local]
-  (let [settings (serdes/default-load-one! ingested maybe-local)
-        table-id (serdes/*import-table-fk* (serdes/table-path->table-ref (pop (serdes/path ingested))))]
-    (when (contains? ingested :fields)
-      ((:import-with-context legacy-fields)
-       (t2/instance :model/TableUserSettings {:table_id table-id}) :fields (:fields ingested)))
-    (when (:field_order ingested)
-      (table/update-field-positions! (warehouse-schema.db/table table-id)))
-    settings))
+  (t2/with-transaction [_]
+    (let [settings (serdes/default-load-one! ingested maybe-local)
+          table-id (serdes/*import-table-fk* (serdes/table-path->table-ref (pop (serdes/path ingested))))]
+      (write-user-values! table-id (user-settings/user-set-table-columns maybe-local))
+      (when (contains? ingested :fields)
+        ((:import-with-context legacy-fields)
+         (t2/instance :model/TableUserSettings {:table_id table-id}) :fields (:fields ingested)))
+      (when (:field_order ingested)
+        (table/update-field-positions! (warehouse-schema.db/table table-id)))
+      settings)))
 
 (defmethod serdes/make-spec "TableUserSettings" [_model-name _opts]
   {:copy      [:display_name :description :entity_type :visibility_type :field_order :caveats :points_of_interest
                :show_in_getting_started :data_authority :data_source :owner_email :is_published
-               :description_set :visibility_type_set :caveats_set
-               :points_of_interest_set :data_layer_set :data_source_set]
+               :description_set :visibility_type_set :data_layer_set :data_source_set]
    :defaults  {:description_set        false
                :visibility_type_set    false
-               :caveats_set            false
-               :points_of_interest_set false
                :data_layer_set         false
                :data_source_set        false}
    :transform {:collection_id (serdes/fk :model/Collection)
