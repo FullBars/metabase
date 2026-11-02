@@ -92,6 +92,11 @@
   ([model pk]
    (mi/can-read? model pk)))
 
+(defmethod mi/can-update? :model/Transform
+  [instance changes]
+  (and (mi/can-write? instance)
+       (mi/can-write? (merge instance changes))))
+
 (defmethod mi/can-create? :model/Transform
   [_model instance]
   ;; Inline can-write? logic since instance is a plain map without model metadata.
