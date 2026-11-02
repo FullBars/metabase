@@ -6,7 +6,6 @@
    [malli.core :as mc]
    [metabase.lib.schema.common :as lib.schema.common]
    [metabase.lib.schema.id :as lib.schema.id]
-   [metabase.transforms.schema :as transforms.schema]
    [metabase.util.malli.registry :as mr]
    [metabase.util.malli.schema :as ms]))
 
@@ -165,12 +164,6 @@
     [:description  [:maybe :string]]
     [:created_at   ms/TemporalInstant]
     [:updated_at   ms/TemporalInstant]]])
-
-(mr/def ::adhoc-run.request
-  "What a client sends to run a transform test that is not saved, of a transform that need not be saved either."
-  [:map {:closed true}
-   [:transform ::transforms.schema/transform.content]
-   [:test      ::transform-test.content]])
 
 (mr/def ::transform-test.update
   "What a client sends to update a transform test. Omitted fields are left unchanged."

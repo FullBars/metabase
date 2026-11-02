@@ -249,9 +249,12 @@
   (validated-plan (api/check-404 (transform-testing.db/transform transform-id)) inputs expectations)
   nil)
 
-(mu/defn- run-test! :- ::transform-testing.schema/run-result
-  "Run `transform-test` against `transform` on temp tables, recording the run under the test's `:id`, or under no
-  test when it is not saved."
+(mu/defn run-transform-test! :- ::transform-testing.schema/run-result
+  "Run `transform-test` against `transform` on temp tables and report what each expectation found, recording the run
+  under the test's `:id`, or under no test when it is not saved.
+
+  Throws a typed refusal from [[metabase-enterprise.transform-testing.errors]] when the run cannot happen. A
+  failing expectation is not a refusal: it rides back as that expectation's own result."
   [transform                                        :- ::transform
    {:keys [inputs expectations] :as transform-test} :- ::transform-test]
   (let [{:keys [driver database input->table output-table labels replacements compiled]}
@@ -281,17 +284,3 @@
         result)
       (finally
         (transform-testing.run-tracking/finish-run! run-id @final-status)))))
-
-(mu/defn run-transform-test! :- ::transform-testing.schema/run-result
-  "Run the transform test `transform-test` against temp tables and report what each expectation found.
-
-  Throws a typed refusal from [[metabase-enterprise.transform-testing.errors]] when the run cannot happen. A
-  failing expectation is not a refusal: it rides back as that expectation's own result."
-  [transform-test :- ::transform-testing.schema/transform-test]
-  (run-test! (api/check-404 (transform-testing.db/transform (:transform_id transform-test))) transform-test))
-
-(mu/defn run-adhoc-transform-test! :- ::transform-testing.schema/run-result
-  "Run the unsaved `test` of the unsaved `transform` as [[run-transform-test!]] runs a saved one, recording a run
-  that belongs to no transform test."
-  [{:keys [transform test]} :- ::transform-testing.schema/adhoc-run.request]
-  (run-test! transform test))

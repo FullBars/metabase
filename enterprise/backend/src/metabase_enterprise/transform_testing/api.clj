@@ -10,6 +10,7 @@
    [metabase.models.interface :as mi]
    [metabase.query-processor.parameters.dates :as params.dates]
    [metabase.request.core :as request]
+   [metabase.transforms.schema :as transforms.schema]
    [metabase.util.date-2 :as u.date]
    [metabase.util.i18n :refer [tru]]
    [metabase.util.malli.schema :as ms]
@@ -100,9 +101,11 @@
   saved one."
   [_route-params
    _query-params
-   body :- ::transform-testing.schema/adhoc-run.request]
-  (api/create-check :model/Transform (:transform body))
-  (refusing #(transform-testing.runner/run-adhoc-transform-test! body)))
+   {:keys [transform test]} :- [:map {:closed true}
+                                [:transform ::transforms.schema/transform.content]
+                                [:test      ::transform-testing.schema/transform-test.content]]]
+  (api/create-check :model/Transform transform)
+  (refusing #(transform-testing.runner/run-transform-test! transform test)))
 
 (api.macros/defendpoint :get "/:id/run" :- ::transform-testing.schema/transform-test-runs.response
   "List the runs of a transform test, newest first."
@@ -139,9 +142,9 @@
   naming which refusal it was, as [[refusing]] describes."
   [{:keys [id]} :- [:map {:closed true}
                     [:id ms/PositiveInt]]]
-  (refusing #(-> (transform-testing.db/transform-test id)
-                 api/write-check
-                 transform-testing.runner/run-transform-test!)))
+  (let [transform-test (api/write-check (transform-testing.db/transform-test id))
+        transform      (api/read-check (transform-testing.db/transform (:transform_id transform-test)))]
+    (refusing #(transform-testing.runner/run-transform-test! transform transform-test))))
 
 (def ^{:arglists '([request respond raise])} routes
   "`/api/ee/transform-test` routes."
