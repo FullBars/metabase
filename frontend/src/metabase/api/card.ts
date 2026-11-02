@@ -219,6 +219,18 @@ export const cardApi = Api.injectEndpoints({
 
           return invalidateTags(error, tags);
         },
+        onQueryStarted: async ({ id }, { dispatch, queryFulfilled }) => {
+          try {
+            const { data: card } = await queryFulfilled;
+            // RTK Query holds back tag invalidation until no requests are running,
+            // so a long-running query would keep the pre-save card in the cache and
+            // the editor would reopen on stale data. Saving that would undo this save.
+            // https://github.com/metabase/metabase/issues/84490
+            dispatch(cardApi.util.upsertQueryData("getCard", { id }, card));
+          } catch {
+            // the caller reports the error; there is nothing to update
+          }
+        },
       }),
       deleteCard: builder.mutation<void, CardId>({
         query: (id) => ({
