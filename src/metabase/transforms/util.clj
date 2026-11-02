@@ -13,7 +13,6 @@
    [metabase.driver.sql-jdbc :as sql-jdbc]
    [metabase.driver.util :as driver.u]
    [metabase.indexes.models.table-index :as table-index]
-   [metabase.lib.schema.id :as lib.schema.id]
    [metabase.models.interface :as mi]
    [metabase.premium-features.core :as premium-features]
    [metabase.query-processor.middleware.permissions :as qp.perms]
@@ -30,9 +29,7 @@
    [metabase.transforms.settings :as transforms.settings]
    [metabase.util :as u]
    [metabase.util.log :as log]
-   [metabase.util.malli :as mu]
-   [metabase.util.malli.registry :as mr]
-   [metabase.util.malli.schema :as ms])
+   [metabase.util.malli :as mu])
   (:import
    (java.sql SQLException)))
 
@@ -260,21 +257,12 @@
   [transform :- ::transforms.schema/transform]
   (select-keys transform [:name :description :source :target]))
 
-(mr/def ::models-cache
-  "Databases and Tables prefetched for a batch of transforms by [[prefetch-source-models]]."
-  [:map {:closed true}
-   [:model/Database [:maybe [:map-of ::lib.schema.id/database (ms/InstanceOf :model/Database)]]]
-   [:model/Table    [:maybe [:map-of ::lib.schema.id/table (ms/InstanceOf :model/Table)]]]])
-
 (mu/defn source-readable? :- :boolean
   "Whether the current user may read `transform`, saved or not: its kind of transform is enabled, and the user is a
-  superuser or a data analyst who may query its source. Databases and Tables come from `models-cache` when given."
-  ([transform :- ::transforms.schema/transform.content]
-   (source-readable? transform nil))
-  ([transform    :- ::transforms.schema/transform.content
-    models-cache :- [:maybe ::models-cache]]
-   (boolean
-    (and (check-feature-enabled transform)
-         (or api/*is-superuser?*
-             (and (api/entitled-data-analyst?)
-                  (source-tables-readable? transform models-cache)))))))
+  superuser or a data analyst who may query its source."
+  [transform :- ::transforms.schema/transform.content]
+  (boolean
+   (and (check-feature-enabled transform)
+        (or api/*is-superuser?*
+            (and (api/entitled-data-analyst?)
+                 (source-tables-readable? transform))))))

@@ -37,22 +37,14 @@
 (doseq [trait [:metabase/model :hook/entity-id :hook/timestamped? :hook/dependencies]]
   (derive :model/Transform trait))
 
-(defn- orphan-query?
-  "True when the query map has its `:database` key explicitly set to nil — the
-  signature of a transform body whose source database has been deleted (e.g.
-  imported from a serdes export of an orphan). We preserve such bodies verbatim
-  rather than running them through MBQL normalization, which requires a database."
-  [q]
-  (or (and (contains? q :database) (nil? (:database q)))
-      (and (contains? q "database") (nil? (get q "database")))))
-
 (defn- transform-readable?
   "Whether the current user can read `instance`. Any extra `args` (an optional `models-cache`) are
-  passed through to `transforms.u/source-readable?`."
+  passed through to `transforms.u/source-tables-readable?`."
   [instance & args]
-  (if (orphan-query? (get-in instance [:source :query]))
-    (boolean (and (transforms.u/check-feature-enabled instance) api/*is-superuser?*))
-    (apply transforms.u/source-readable? (transforms.u/->content instance) args)))
+  (and (transforms.u/check-feature-enabled instance)
+       (or api/*is-superuser?*
+           (and (api/entitled-data-analyst?)
+                (apply transforms.u/source-tables-readable? instance args)))))
 
 (defn- native-transform-write-allowed?
   [instance source-db-id]
@@ -113,6 +105,15 @@
                   (transforms.u/source-tables-readable? instance)
                   (transform-database-permissions? instance)
                   (native-transform-write-allowed? instance source-db-id))))))
+
+(defn- orphan-query?
+  "True when the query map has its `:database` key explicitly set to nil — the
+  signature of a transform body whose source database has been deleted (e.g.
+  imported from a serdes export of an orphan). We preserve such bodies verbatim
+  rather than running them through MBQL normalization, which requires a database."
+  [q]
+  (or (and (contains? q :database) (nil? (:database q)))
+      (and (contains? q "database") (nil? (get q "database")))))
 
 (defn transform-source-out
   "Deserialize a transform source map from JSON storage format.
