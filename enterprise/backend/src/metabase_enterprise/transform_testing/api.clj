@@ -2,6 +2,7 @@
   (:require
    [metabase-enterprise.transform-testing.db :as transform-testing.db]
    [metabase-enterprise.transform-testing.errors :as transform-testing.errors]
+   [metabase-enterprise.transform-testing.models :as transform-testing.models]
    [metabase-enterprise.transform-testing.runner :as transform-testing.runner]
    [metabase-enterprise.transform-testing.schema :as transform-testing.schema]
    [metabase.api.common :as api]
@@ -56,7 +57,8 @@
   [_route-params
    _query-params
    {:keys [transform_id inputs expectations] :as body} :- ::transform-testing.schema/transform-test.create]
-  (api/write-check :model/Transform transform_id)
+  (api/check-404 (transform-testing.db/transform transform_id))
+  (api/create-check :model/TransformTest body)
   (refusing #(transform-testing.runner/validate-transform-test transform_id inputs expectations))
   (transform-testing.db/insert-transform-test! (assoc body :creator_id api/*current-user-id*)))
 
@@ -68,7 +70,8 @@
    {:keys [transform_id] :as body} :- ::transform-testing.schema/transform-test.update]
   (let [transform-test (api/write-check (transform-testing.db/transform-test id))]
     (when transform_id
-      (api/write-check :model/Transform transform_id))
+      (api/check-404 (transform-testing.db/transform transform_id))
+      (api/create-check :model/TransformTest (merge transform-test body)))
     (when (seq body)
       (when (some #(contains? body %) [:transform_id :inputs :expectations])
         (let [{:keys [transform_id inputs expectations]} (merge transform-test body)]
@@ -104,7 +107,7 @@
    {:keys [transform test]} :- [:map {:closed true}
                                 [:transform ::transforms.schema/transform.content]
                                 [:test      ::transform-testing.schema/transform-test.content]]]
-  (api/create-check :model/Transform transform)
+  (api/check-403 (transform-testing.models/can-create-test? transform test))
   (refusing #(transform-testing.runner/run-transform-test! transform test)))
 
 (api.macros/defendpoint :get "/:id/run" :- ::transform-testing.schema/transform-test-runs.response
@@ -142,7 +145,7 @@
   naming which refusal it was, as [[refusing]] describes."
   [{:keys [id]} :- [:map {:closed true}
                     [:id ms/PositiveInt]]]
-  (let [transform-test (api/write-check (transform-testing.db/transform-test id))
+  (let [transform-test (api/read-check (transform-testing.db/transform-test id))
         transform      (api/read-check (transform-testing.db/transform (:transform_id transform-test)))]
     (refusing #(transform-testing.runner/run-transform-test! transform transform-test))))
 

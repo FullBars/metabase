@@ -39,12 +39,9 @@
 
 (defn- transform-readable?
   "Whether the current user can read `instance`. Any extra `args` (an optional `models-cache`) are
-  passed through to `transforms.u/source-tables-readable?`."
+  passed through to `transforms.u/source-readable?`."
   [instance & args]
-  (and (transforms.u/check-feature-enabled instance)
-       (or api/*is-superuser?*
-           (and (api/entitled-data-analyst?)
-                (apply transforms.u/source-tables-readable? instance args)))))
+  (apply transforms.u/source-readable? (transforms.u/->content instance) args))
 
 (defn- native-transform-write-allowed?
   [instance source-db-id]

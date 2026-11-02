@@ -2,13 +2,19 @@
   (:require
    [metabase-enterprise.transform-testing.db :as transform-testing.db]
    [metabase-enterprise.transform-testing.schema :as transform-testing.schema]
+   [metabase.api.common :as api]
    [metabase.audit-app.core :as audit-app]
    [metabase.events.core :as events]
    [metabase.lib.core :as lib]
    [metabase.models.interface :as mi]
    [metabase.models.serialization :as serdes]
+   [metabase.permissions.core :as perms]
    [metabase.premium-features.core :refer [defenterprise]]
+   [metabase.remote-sync.core :as remote-sync]
    [metabase.revisions.models.revision :as revision]
+   [metabase.transforms-base.interface :as transforms-base.i]
+   [metabase.transforms.schema :as transforms.schema]
+   [metabase.transforms.util :as transforms.u]
    [metabase.util.malli :as mu]
    [methodical.core :as methodical]
    [toucan2.core :as t2]))
@@ -52,6 +58,35 @@
 
 ;;; ------------------------------------------------- Permissions --------------------------------------------------
 
+(mu/defn ->content :- ::transform-testing.schema/transform-test.content
+  "The part of `transform-test` that a client writes, without the transform it covers."
+  [transform-test :- [:or
+                      ::transform-testing.schema/transform-test
+                      ::transform-testing.schema/transform-test.create]]
+  (select-keys transform-test [:name :description :inputs :expectations]))
+
+(mu/defn can-create-test? :- :boolean
+  "Whether the current user may create `_transform-test` of `transform`, both saved or not: the test runs its own SQL
+  on the source database of the transform."
+  [transform       :- ::transforms.schema/transform.content
+   _transform-test :- ::transform-testing.schema/transform-test.content]
+  (let [database-id (transforms-base.i/source-db-id transform)]
+    (boolean
+     (and database-id
+          (transforms.u/source-readable? transform)
+          (perms/has-db-transforms-permission? api/*current-user-id* database-id)
+          (= :query-builder-and-native
+             (perms/full-database-permission-for-user api/*current-user-id* :perms/create-queries database-id))))))
+
+(defn- can-save-test?
+  "Whether the current user may save `transform-test`, checked against the Transform its `:transform_id` names."
+  [transform-test]
+  (boolean
+   (and (remote-sync/transforms-editable?)
+        (some-> (transform-testing.db/transform (:transform_id transform-test))
+                transforms.u/->content
+                (can-create-test? (->content transform-test))))))
+
 (defmethod mi/can-read? :model/TransformTest
   ([instance]
    (mi/can-read? :model/Transform (:transform_id instance)))
@@ -61,14 +96,14 @@
 
 (defmethod mi/can-write? :model/TransformTest
   ([instance]
-   (mi/can-write? :model/Transform (:transform_id instance)))
+   (can-save-test? instance))
   ([_model pk]
    (when-let [transform-test (transform-testing.db/transform-test pk)]
      (mi/can-write? transform-test))))
 
 (defmethod mi/can-create? :model/TransformTest
   [_model instance]
-  (mi/can-write? :model/Transform (:transform_id instance)))
+  (can-save-test? instance))
 
 ;;; -------------------------------------------------- Revisions ---------------------------------------------------
 

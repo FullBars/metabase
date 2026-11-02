@@ -2,6 +2,8 @@
   (:require
    [clojure.test :refer :all]
    [metabase.lib.core :as lib]
+   [metabase.lib.metadata :as lib.metadata]
+   [metabase.permissions.models.permissions-group :as perms-group]
    [metabase.test :as mt]
    [toucan2.core :as t2]))
 
@@ -170,26 +172,53 @@
 
 (deftest permissions-test
   (with-transforms-enabled
-    (mt/with-temp [:model/Transform     {transform-id :id} {}
-                   :model/TransformTest {test-id :id}      {:transform_id transform-id}]
-      (let [path (str "ee/transform-test/" test-id)
-            body {:transform_id transform-id :name "nope" :inputs [] :expectations []}]
-        (testing "users without transform access can't read or change transform tests"
-          (mt/user-http-request :rasta :get 403 "ee/transform-test")
-          (mt/user-http-request :rasta :get 403 path)
-          (mt/user-http-request :rasta :post 403 "ee/transform-test" body)
-          (mt/user-http-request :rasta :put 403 path {:name "nope"})
-          (mt/user-http-request :rasta :delete 403 path)
-          (mt/user-http-request :rasta :post 403 (str path "/run")))
-        (testing "data analysts who can read but not write the transform can read but not change its tests"
-          (mt/with-data-analyst-role! (mt/user->id :lucky)
-            (is (some #{test-id} (map :id (mt/user-http-request :lucky :get 200 "ee/transform-test"))))
-            (mt/user-http-request :lucky :get 200 path)
-            (mt/user-http-request :lucky :post 403 "ee/transform-test" body)
-            (mt/user-http-request :lucky :put 403 path {:name "nope"})
-            (mt/user-http-request :lucky :delete 403 path)
-            (mt/user-http-request :lucky :post 403 (str path "/run"))))
-        (is (t2/exists? :model/TransformTest :id test-id))))))
+    (let [mp            (mt/metadata-provider)
+          mbql-transform {:source {:type  "query"
+                                   :query (-> (lib/query mp (lib.metadata/table mp (mt/id :people)))
+                                              (lib/with-fields [(lib.metadata/field mp (mt/id :people :id))]))}
+                          :target {:type "table" :schema "PUBLIC" :name "PEOPLE_SUMMARY" :database (mt/id)}}]
+      (mt/with-temp [:model/Transform     {transform-id :id} mbql-transform
+                     :model/TransformTest {test-id :id}      {:transform_id transform-id
+                                                              :inputs       inputs
+                                                              :expectations expectations}]
+        (let [path  (str "ee/transform-test/" test-id)
+              body  {:transform_id transform-id :name "nope" :inputs inputs :expectations expectations}
+              adhoc {:transform (assoc mbql-transform :name "adhoc")
+                     :test      {:name "adhoc" :inputs inputs :expectations expectations}}
+              refused-writes (fn [user]
+                               (mt/user-http-request user :post 403 "ee/transform-test" body)
+                               (mt/user-http-request user :put 403 path {:name "nope"})
+                               (mt/user-http-request user :delete 403 path)
+                               (mt/user-http-request user :post 403 "ee/transform-test/run" adhoc))]
+          (try
+            (testing "users without transform access can't read, change, or run transform tests"
+              (mt/user-http-request :rasta :get 403 "ee/transform-test")
+              (mt/user-http-request :rasta :get 403 path)
+              (mt/user-http-request :rasta :post 403 (str path "/run"))
+              (refused-writes :rasta))
+            (mt/with-data-analyst-role! (mt/user->id :lucky)
+              (testing "data analysts who can read transform can read and run its tests"
+                (mt/with-db-perms-for-group! (perms-group/all-users) (mt/id) {:perms/transforms     :no
+                                                                              :perms/create-queries :query-builder}
+                  (is (some #{test-id} (map :id (mt/user-http-request :lucky :get 200 "ee/transform-test"))))
+                  (mt/user-http-request :lucky :get 200 path)
+                  (is (= "passed" (:status (mt/user-http-request :lucky :post 200 (str path "/run")))))))
+              (testing "writing or running test SQL needs transforms permission on source database"
+                (mt/with-db-perms-for-group! (perms-group/all-users) (mt/id) {:perms/transforms     :no
+                                                                              :perms/create-queries :query-builder-and-native}
+                  (refused-writes :lucky)))
+              (testing "writing or running test SQL needs native access to source database"
+                (mt/with-db-perms-for-group! (perms-group/all-users) (mt/id) {:perms/transforms     :yes
+                                                                              :perms/create-queries :query-builder}
+                  (refused-writes :lucky)))
+              (testing "with both, data analysts can change tests and run unsaved ones"
+                (mt/with-db-perms-for-group! (perms-group/all-users) (mt/id) {:perms/transforms     :yes
+                                                                              :perms/create-queries :query-builder-and-native}
+                  (is (=? {:name "renamed"} (mt/user-http-request :lucky :put 200 path {:name "renamed"})))
+                  (is (= "passed" (:status (mt/user-http-request :lucky :post 200 "ee/transform-test/run" adhoc)))))))
+            (is (t2/exists? :model/TransformTest :id test-id))
+            (finally
+              (t2/delete! :model/TransformTestRun :initiated_by (mt/user->id :lucky)))))))))
 
 (deftest list-runs-test
   (with-transforms-enabled

@@ -4630,8 +4630,10 @@
            lib
            lib.schema
            models
+           permissions
            premium-features
            query-processor
+           remote-sync
            request
            revisions
            run-tracking

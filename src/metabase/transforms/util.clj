@@ -13,6 +13,7 @@
    [metabase.driver.sql-jdbc :as sql-jdbc]
    [metabase.driver.util :as driver.u]
    [metabase.indexes.models.table-index :as table-index]
+   [metabase.lib.schema.id :as lib.schema.id]
    [metabase.models.interface :as mi]
    [metabase.premium-features.core :as premium-features]
    [metabase.query-processor.middleware.permissions :as qp.perms]
@@ -25,9 +26,13 @@
    [metabase.transforms.db :as transforms.db]
    [metabase.transforms.instrumentation :as transforms.instrumentation]
    [metabase.transforms.models.transform-run :as transform-run]
+   [metabase.transforms.schema :as transforms.schema]
    [metabase.transforms.settings :as transforms.settings]
    [metabase.util :as u]
-   [metabase.util.log :as log])
+   [metabase.util.log :as log]
+   [metabase.util.malli :as mu]
+   [metabase.util.malli.registry :as mr]
+   [metabase.util.malli.schema :as ms])
   (:import
    (java.sql SQLException)))
 
@@ -249,3 +254,27 @@
   (boolean
    (when-let [table-name (and (premium-features/any-transforms-enabled?) (:name table))]
      (str/starts-with? (u/lower-case-en table-name) driver.u/transform-temp-table-prefix))))
+
+(mu/defn ->content :- ::transforms.schema/transform.content
+  "The part of the saved `transform` that a client writes."
+  [transform :- ::transforms.schema/transform]
+  (select-keys transform [:name :description :source :target]))
+
+(mr/def ::models-cache
+  "Databases and Tables prefetched for a batch of transforms by [[prefetch-source-models]]."
+  [:map {:closed true}
+   [:model/Database [:maybe [:map-of ::lib.schema.id/database (ms/InstanceOf :model/Database)]]]
+   [:model/Table    [:maybe [:map-of ::lib.schema.id/table (ms/InstanceOf :model/Table)]]]])
+
+(mu/defn source-readable? :- :boolean
+  "Whether the current user may query the source of `transform`, saved or not, looking up its Databases and Tables in
+  `models-cache` when one is given."
+  ([transform :- ::transforms.schema/transform.content]
+   (source-readable? transform nil))
+  ([transform    :- ::transforms.schema/transform.content
+    models-cache :- [:maybe ::models-cache]]
+   (boolean
+    (and (check-feature-enabled transform)
+         (or api/*is-superuser?*
+             (and (api/entitled-data-analyst?)
+                  (source-tables-readable? transform models-cache)))))))
