@@ -7,7 +7,6 @@
    [metabase.events.core :as events]
    [metabase.lib-be.core :as lib-be]
    [metabase.lib.core :as lib]
-   [metabase.lib.schema.id :as lib.schema.id]
    [metabase.models.interface :as mi]
    [metabase.models.serialization :as serdes]
    [metabase.permissions.core :as perms]
@@ -61,54 +60,49 @@
 
 ;;; ------------------------------------------------- Permissions --------------------------------------------------
 
-(mu/defn ->content :- ::transform-testing.schema/transform-test.content
-  "The part of `transform-test` that a client writes, without the transform it covers."
-  [transform-test :- [:or
-                      ::transform-testing.schema/transform-test
-                      ::transform-testing.schema/transform-test.create]]
-  (select-keys transform-test [:name :description :inputs :expectations]))
-
-(mu/defn saved-transform-content :- [:maybe ::transforms.schema/transform.content]
-  "The content of the Transform with `transform-id`, or nil when it is missing or has no source Database."
-  [transform-id :- ::lib.schema.id/transform]
-  (when-let [transform (transform-testing.db/transform transform-id)]
-    (when (transforms-base.i/source-db-id transform)
-      (transforms.u/->content transform))))
+(defn- transform-content
+  "The content of `transform`, saved or not, or nil when it has no source Database to run a test on."
+  [transform]
+  (when (transforms-base.i/source-db-id transform)
+    (cond-> transform
+      (:id transform) transforms.u/->content)))
 
 (defn- source-sql
   "A native query on the source Database of `transform`, standing in for the SQL a test of it runs there."
   [transform]
-  (when-let [database-id (transforms-base.i/source-db-id transform)]
-    (lib/native-query (lib-be/application-database-metadata-provider database-id) "SELECT 1")))
+  (lib/native-query (lib-be/application-database-metadata-provider (transforms-base.i/source-db-id transform))
+                    "SELECT 1"))
 
-(mu/defn can-run-test? :- :boolean
-  "Whether the current user may run a test of `transform`, which needs what a saved native question on its source
-  Database needs."
+(mu/defn- can-see-test-sql-results? :- :boolean
+  "Whether the current user may see what SQL on the source Database of `transform` returns, as a saved native question
+  on it needs."
   [transform :- ::transforms.schema/transform.content]
   (boolean
-   (or api/*is-superuser?*
-       (and (transforms.u/source-readable? transform)
-            (when-let [query (source-sql transform)]
-              (query-perms/has-perm-for-query? query :perms/view-data (query-perms/required-perms-for-query query)))))))
+   (and (transforms.u/source-readable? transform)
+        (let [query (source-sql transform)]
+          (query-perms/has-perm-for-query? query :perms/view-data (query-perms/required-perms-for-query query))))))
 
-(mu/defn can-create-test? :- :boolean
-  "Whether the current user may write the SQL of `_transform-test` of `transform`, which needs what an ad hoc native
-  query and a transform on its source Database need."
-  [transform       :- ::transforms.schema/transform.content
-   _transform-test :- ::transform-testing.schema/transform-test.content]
+(mu/defn- can-write-test-sql? :- :boolean
+  "Whether the current user may write SQL on the source Database of `transform` for a test, as an ad hoc native query
+  and a transform on it need."
+  [transform :- ::transforms.schema/transform.content]
+  (boolean
+   (and (can-see-test-sql-results? transform)
+        (perms/has-db-transforms-permission? api/*current-user-id* (transforms-base.i/source-db-id transform))
+        (query-perms/can-run-query? (source-sql transform)))))
+
+(mu/defn can-run-test? :- :boolean
+  "Whether the current user may run `transform-test` of `transform`, each saved or not. A saved test runs SQL its
+  author wrote, which needs what a saved native question needs; an unsaved one runs the caller's SQL, which needs what
+  writing it needs."
+  [transform      :- ::transform-testing.schema/transform.saved-or-content
+   transform-test :- ::transform-testing.schema/transform-test.saved-or-content]
   (boolean
    (or api/*is-superuser?*
-       (and (can-run-test? transform)
-            (perms/has-db-transforms-permission? api/*current-user-id* (transforms-base.i/source-db-id transform))
-            (query-perms/can-run-query? (source-sql transform))))))
-
-(defn can-run-saved-test?
-  "Whether the current user may run the saved `transform-test`, checked against the Transform its `:transform_id`
-  names."
-  [transform-test]
-  (boolean
-   (or api/*is-superuser?*
-       (some-> (saved-transform-content (:transform_id transform-test)) can-run-test?))))
+       (when-let [content (transform-content transform)]
+         (if (:id transform-test)
+           (can-see-test-sql-results? content)
+           (can-write-test-sql? content))))))
 
 (defn- can-save-test?
   "Whether the current user may save or delete `transform-test`, checked against the Transform its `:transform_id`
@@ -116,9 +110,9 @@
   [transform-test]
   (boolean
    (and (remote-sync/transforms-editable?)
-        (or api/*is-superuser?*
-            (some-> (saved-transform-content (:transform_id transform-test))
-                    (can-create-test? (->content transform-test)))))))
+        (when-let [transform (transform-testing.db/transform (:transform_id transform-test))]
+          (or api/*is-superuser?*
+              (some-> (transform-content transform) can-write-test-sql?))))))
 
 (defmethod mi/can-read? :model/TransformTest
   ([instance]
@@ -137,6 +131,12 @@
 (defmethod mi/can-create? :model/TransformTest
   [_model instance]
   (can-save-test? instance))
+
+(defmethod mi/can-update? :model/TransformTest
+  [instance changes]
+  (and (can-save-test? instance)
+       (or (= (:transform_id instance) (:transform_id changes (:transform_id instance)))
+           (can-save-test? (merge instance changes)))))
 
 ;;; -------------------------------------------------- Revisions ---------------------------------------------------
 

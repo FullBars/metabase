@@ -35,9 +35,7 @@
    [metabase.driver.util :as driver.u]
    [metabase.lib.schema.metadata :as lib.schema.metadata]
    [metabase.sql-parsing.core :as sql-parsing]
-   [metabase.transforms-base.schema :as transforms-base.schema]
    [metabase.transforms-base.util :as transforms-base.u]
-   [metabase.transforms.schema :as transforms.schema]
    [metabase.util.i18n :refer [tru]]
    [metabase.util.malli :as mu]
    [metabase.util.malli.registry :as mr]))
@@ -48,18 +46,6 @@
 (comment
   metabase-enterprise.transform-testing.expectations.empty/keep-me
   metabase-enterprise.transform-testing.expectations.equals/keep-me)
-
-(mr/def ::transform
-  "The transform under test: a saved one, or one a client wrote and did not save."
-  [:or
-   ::transforms-base.schema/transform
-   ::transforms.schema/transform.content])
-
-(mr/def ::transform-test
-  "The transform test to run: a saved one, or one a client wrote and did not save."
-  [:or
-   ::transform-testing.schema/transform-test
-   ::transform-testing.schema/transform-test.content])
 
 (mr/def ::plan
   "What [[validated-plan]] hands the run that follows it."
@@ -208,7 +194,7 @@
   Throws the run's typed refusals — an untestable transform or driver, SQL that will not parse, a test the
   validator rejects — so a caller that only wants the answer to \"could this run?\" gets it by asking for the plan
   and discarding it."
-  [transform    :- ::transform
+  [transform    :- ::transform-testing.schema/transform.saved-or-content
    inputs       :- ::transform-testing.schema/inputs
    expectations :- ::transform-testing.schema/expectations]
   (check-testable-transform transform)
@@ -242,7 +228,7 @@
 
   Returns nil when there is nothing to refuse, and otherwise throws the refusal the run would have thrown, so a test
   is turned away as it is authored rather than only when somebody runs it."
-  [transform    :- ::transform
+  [transform    :- ::transform-testing.schema/transform.saved-or-content
    inputs       :- ::transform-testing.schema/inputs
    expectations :- ::transform-testing.schema/expectations]
   (validated-plan transform inputs expectations)
@@ -254,8 +240,8 @@
 
   Throws a typed refusal from [[metabase-enterprise.transform-testing.errors]] when the run cannot happen. A
   failing expectation is not a refusal: it rides back as that expectation's own result."
-  [transform                                        :- ::transform
-   {:keys [inputs expectations] :as transform-test} :- ::transform-test]
+  [transform                                        :- ::transform-testing.schema/transform.saved-or-content
+   {:keys [inputs expectations] :as transform-test} :- ::transform-testing.schema/transform-test.saved-or-content]
   (let [{:keys [driver database input->table output-table labels replacements compiled]}
         (validated-plan transform inputs expectations)
         {run-id :id} (transform-testing.run-tracking/start-run! (:id transform-test) api/*current-user-id*)

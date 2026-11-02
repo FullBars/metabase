@@ -137,9 +137,9 @@
         (testing "expectations need a name"
           (mt/user-http-request :crowberto :post 400 "ee/transform-test"
                                 (assoc valid :expectations [{:type "empty" :sql "SELECT 1"}])))
-        (testing "the transform must exist"
-          (mt/user-http-request :crowberto :post 404 "ee/transform-test" (assoc valid :transform_id Integer/MAX_VALUE))
-          (mt/user-http-request :crowberto :put 404 (str "ee/transform-test/" test-id) {:transform_id Integer/MAX_VALUE}))))))
+        (testing "transform must exist"
+          (mt/user-http-request :crowberto :post 403 "ee/transform-test" (assoc valid :transform_id Integer/MAX_VALUE))
+          (mt/user-http-request :crowberto :put 403 (str "ee/transform-test/" test-id) {:transform_id Integer/MAX_VALUE}))))))
 
 (deftest run-transform-test-endpoint-test
   (mt/test-driver :h2
@@ -268,6 +268,28 @@
               (mt/user-http-request :lucky :post 403 "ee/transform-test/run"
                                     {:transform (assoc (people-id-transform) :name "adhoc")
                                      :test      {:name "adhoc" :inputs orders-input :expectations expectations}}))))))))
+
+(deftest update-transform-id-needs-access-to-both-transforms-test
+  (testing "moving test to another transform needs permission to save tests of both transforms"
+    (with-transforms-enabled
+      (mt/with-temp [:model/Database      {other-db-id :id}  {}
+                     :model/Transform     {transform-id :id} (people-id-transform)
+                     :model/Transform     {other-id :id}     {:source {:type  "query"
+                                                                       :query {:database other-db-id
+                                                                               :type     "native"
+                                                                               :native   {:query "SELECT 1"}}}}
+                     :model/TransformTest {test-id :id}      {:transform_id transform-id
+                                                              :inputs       inputs
+                                                              :expectations expectations}]
+        (mt/with-data-analyst-role! (mt/user->id :lucky)
+          (perms.tu/with-no-data-perms-for-all-users!
+            (mt/with-db-perms-for-group! (perms-group/all-users) (mt/id) {:perms/view-data      :unrestricted
+                                                                          :perms/transforms     :yes
+                                                                          :perms/create-queries :query-builder-and-native}
+              (let [path (str "ee/transform-test/" test-id)]
+                (mt/user-http-request :lucky :put 403 path {:transform_id other-id})
+                (is (= transform-id (t2/select-one-fn :transform_id :model/TransformTest :id test-id)))
+                (is (=? {:name "renamed"} (mt/user-http-request :lucky :put 200 path {:name "renamed"})))))))))))
 
 (deftest list-runs-test
   (with-transforms-enabled

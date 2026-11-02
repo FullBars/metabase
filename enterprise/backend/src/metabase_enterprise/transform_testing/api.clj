@@ -57,9 +57,10 @@
   [_route-params
    _query-params
    {:keys [transform_id inputs expectations] :as body} :- ::transform-testing.schema/transform-test.create]
-  (let [transform (api/check-404 (transform-testing.db/transform transform_id))]
-    (api/create-check :model/TransformTest body)
-    (refusing #(transform-testing.runner/validate-transform-test transform inputs expectations)))
+  (api/create-check :model/TransformTest body)
+  (refusing #(transform-testing.runner/validate-transform-test (transform-testing.db/transform transform_id)
+                                                               inputs
+                                                               expectations))
   (transform-testing.db/insert-transform-test! (assoc body :creator_id api/*current-user-id*)))
 
 (api.macros/defendpoint :put "/:id" :- ::transform-testing.schema/transform-test
@@ -67,15 +68,14 @@
   [{:keys [id]} :- [:map {:closed true}
                     [:id ms/PositiveInt]]
    _query-params
-   {:keys [transform_id] :as body} :- ::transform-testing.schema/transform-test.update]
-  (let [transform-test (api/write-check (transform-testing.db/transform-test id))
-        updated        (merge transform-test body)
-        transform      (when (some #(contains? body %) [:transform_id :inputs :expectations])
-                         (api/check-404 (transform-testing.db/transform (:transform_id updated))))]
-    (when transform_id
-      (api/create-check :model/TransformTest updated))
-    (when transform
-      (refusing #(transform-testing.runner/validate-transform-test transform (:inputs updated) (:expectations updated))))
+   body :- ::transform-testing.schema/transform-test.update]
+  (let [transform-test (api/check-404 (transform-testing.db/transform-test id))
+        updated        (merge transform-test body)]
+    (api/update-check transform-test body)
+    (when (some #(contains? body %) [:transform_id :inputs :expectations])
+      (refusing #(transform-testing.runner/validate-transform-test (transform-testing.db/transform (:transform_id updated))
+                                                                   (:inputs updated)
+                                                                   (:expectations updated))))
     (when (seq body)
       (transform-testing.db/update-transform-test! id body)))
   (transform-testing.db/transform-test id))
@@ -109,7 +109,7 @@
    {:keys [transform test]} :- [:map {:closed true}
                                 [:transform ::transforms.schema/transform.content]
                                 [:test      ::transform-testing.schema/transform-test.content]]]
-  (api/check-403 (transform-testing.models/can-create-test? transform test))
+  (api/check-403 (transform-testing.models/can-run-test? transform test))
   (refusing #(transform-testing.runner/run-transform-test! transform test)))
 
 (api.macros/defendpoint :get "/:id/run" :- ::transform-testing.schema/transform-test-runs.response
@@ -147,9 +147,9 @@
   naming which refusal it was, as [[refusing]] describes."
   [{:keys [id]} :- [:map {:closed true}
                     [:id ms/PositiveInt]]]
-  (let [transform-test (api/read-check (transform-testing.db/transform-test id))
-        _              (api/check-403 (transform-testing.models/can-run-saved-test? transform-test))
+  (let [transform-test (api/check-404 (transform-testing.db/transform-test id))
         transform      (api/check-404 (transform-testing.db/transform (:transform_id transform-test)))]
+    (api/check-403 (transform-testing.models/can-run-test? transform transform-test))
     (refusing #(transform-testing.runner/run-transform-test! transform transform-test))))
 
 (def ^{:arglists '([request respond raise])} routes
