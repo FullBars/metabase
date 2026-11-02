@@ -75,6 +75,10 @@
   "If `collection-updates` specifies that we should archive a collection, do the appropriate permissions checks and
   then move it to the trash."
   [collection-before-update collection-updates]
+  ;; A transforms folder is deleted, never archived: an archived folder would hide transforms that keep running.
+  (api/check-400 (not (and (:archived collection-updates)
+                           (= (:namespace collection-before-update) collection/transforms-ns)))
+                 (tru "A transforms folder cannot be archived. Delete it instead."))
   ;; sanity check
   (when (api/column-will-change? (:archived collection-before-update) (get collection-updates :archived ::api/not-provided))
     (collection/archive-or-unarchive-collection!

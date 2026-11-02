@@ -19,6 +19,11 @@ title: API changelog
 - `POST /api/ee/serialization/export` accepts a `dirname` of 1-255 characters from `A-Z a-z 0-9 _ - . %`
   that does not start with `.` or `-`. Other values get `400 Bad Request`.
 
+- `PUT /api/collection/:id` with `{"archived": true}` answers `400 Bad Request` for a collection in the `transforms`
+  namespace (a transforms folder). Transforms folders are deleted, not archived: the new
+  `DELETE /api/transform/collection/:id` deletes the folder, its subfolders and every transform in them, and drops
+  their output tables when `delete-tables=true` is passed. Unarchiving a transforms folder still works.
+
 ## Metabase 0.65.0
 
 - `POST /api/transform` and `PUT /api/transform/:id` answer a target table that already exists with
