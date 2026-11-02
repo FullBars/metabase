@@ -196,8 +196,8 @@
 (mu/defn active-fk-to-fields-exists?
   "Whether an active Field on an active Table points at one of the Fields with `field-ids`."
   [field-ids :- [:set ::lib.schema.id/field]]
-  (t2/exists? :model/Field {:from  [:metabase_field]
-                            :join  [:metabase_table
+  (t2/exists? :model/Field {:from  [(t2/table-name :model/Field)]
+                            :join  [(t2/table-name :model/Table)
                                     [:= :metabase_field.table_id :metabase_table.id]]
                             :where [:and
                                     [:in :metabase_field.fk_target_field_id field-ids]

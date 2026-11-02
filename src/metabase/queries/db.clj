@@ -258,7 +258,7 @@
                          [:table.name :table-name]
                          [:table.db_id :field-db-id]]
              :from      [[:metabase_field :field]]
-             :left-join [[:metabase_table :table]
+             :left-join [[(t2/table-name :model/Table) :table]
                          [:= :field.table_id :table.id]]
              :where     [:in :field.id field-ids]}))
 

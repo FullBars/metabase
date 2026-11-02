@@ -108,7 +108,7 @@
                     :table_id [:in table-ids]
                     :semantic_type (app-db/isa :type/PK)
                     :visibility_type [:not-in ["sensitive" "retired"]]
-                    {:from [[:metabase_field :f]]}))
+                    {:from [[(t2/table-name :model/Field) :f]]}))
 
 (mu/defn update-field!
   "Apply `changes` to the ::warehouse-schema.schema/field with `field-id`, returning the number updated."
@@ -155,7 +155,7 @@
    (t2/select-fn-set (comp u/lower-case-en :name)
                      :model/Field
                      {:select    [:f.name]
-                      :from      [[:metabase_field :f]]
+                      :from      [[(t2/table-name :model/Field) :f]]
                       :left-join [[(t2/table-name :model/FieldUserSettings) :u] [:= :u.field_id :f.id]]
                       :where     [:and
                                   [:= :f.table_id table-id]
@@ -168,7 +168,7 @@
   []
   (t2/reducible-query
    {:select    [:f.id :f.name :f.display_name [:u.display_name :user_display_name]]
-    :from      [[:metabase_field :f]]
+    :from      [[(t2/table-name :model/Field) :f]]
     :left-join [[(t2/table-name :model/FieldUserSettings) :u] [:= :u.field_id :f.id]]}))
 
 (mu/defn set-field-display-name!
@@ -199,7 +199,7 @@
   [table-id :- ::lib.schema.id/table]
   (set (t2/select-fn-set :field_id :model/FieldUserSettings
                          {:from  [[(t2/table-name :model/FieldUserSettings) :u]]
-                          :join  [[:metabase_field :f] [:= :f.id :u.field_id]]
+                          :join  [[(t2/table-name :model/Field) :f] [:= :f.id :u.field_id]]
                           :where [:= :f.table_id table-id]})))
 
 (mu/defn dimension-ids-for-table :- [:set ::lib.schema.id/dimension]
@@ -207,7 +207,7 @@
   [table-id :- ::lib.schema.id/table]
   (set (t2/select-pks-set :model/Dimension
                           {:from  [[(t2/table-name :model/Dimension) :d]]
-                           :join  [[:metabase_field :f] [:= :f.id :d.field_id]]
+                           :join  [[(t2/table-name :model/Field) :f] [:= :f.id :d.field_id]]
                            :where [:= :f.table_id table-id]})))
 
 (mu/defn field-user-settings-for-tables
@@ -216,7 +216,7 @@
   (t2/select :model/FieldUserSettings
              {:select   [:u.* [:f.table_id :table_id] [:f.name :field_name]]
               :from     [[(t2/table-name :model/FieldUserSettings) :u]]
-              :join     [[:metabase_field :f] [:= :f.id :u.field_id]]
+              :join     [[(t2/table-name :model/Field) :f] [:= :f.id :u.field_id]]
               :where    [:in :f.table_id table-ids]
               :order-by [[:f.name :asc]]}))
 
@@ -349,7 +349,7 @@
   "The ::warehouse-schema.schema/field ID, values, and ::warehouse-schema.schema/table ID of the full FieldValues of the normal Fields of the Tables with `table-ids`."
   [table-ids :- [:sequential ::lib.schema.id/table]]
   (t2/select [:model/FieldValues :field_id :values :field.table_id]
-             {:join  [[:metabase_field :field]
+             {:join  [[(t2/table-name :model/Field) :field]
                       [:= :metabase_fieldvalues.field_id :field.id]]
               :where [:and
                       [:in :field.table_id table-ids]
@@ -543,7 +543,7 @@
   (t2/reducible-query
    {:select    [:t.id :t.name :t.display_name
                 [:u.display_name :user_display_name]]
-    :from      [[:metabase_table :t]]
+    :from      [[(t2/table-name :model/Table) :t]]
     :left-join [[(t2/table-name :model/TableUserSettings) :u] [:= :u.table_id :t.id]]}))
 
 (mu/defn set-table-display-name!

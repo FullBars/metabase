@@ -74,7 +74,7 @@
   [database-id :- ::lib.schema.id/database]
   (mapv :id
         (t2/query {:select [:table.id]
-                   :from      [[:metabase_table :table]]
+                   :from      [[(t2/table-name :model/Table) :table]]
                    :where  [:and [:= :table.db_id database-id]
                             ;; Exclude DATABASECHANGELOG, DATABASECHANGELOGLOCK, and QRTZ_* tables, they are not metabase managed
                             [:not= :table.name "DATABASECHANGELOG"]
@@ -83,7 +83,7 @@
                             [:not= :table.name "DATABASECHANGELOG_FIRST_RUN"]
                             [:not [:like :table.name "QRTZ_%"]]
                             [:not [:exists ^:allow-subquery {:select [1]
-                                                             :from   [[:metabase_table :self_table]]
+                                                             :from   [[(t2/table-name :model/Table) :self_table]]
                                                              :where  [:and
                                                                       [:= :self_table.db_id :table.db_id]
                                                                       [:or
@@ -104,8 +104,8 @@
   [database-id :- ::lib.schema.id/database]
   (mapv :id
         (t2/query {:select     [:field.id]
-                   :from      [[:metabase_field :field]]
-                   :inner-join [[:metabase_table :table]
+                   :from      [[(t2/table-name :model/Field) :field]]
+                   :inner-join [[(t2/table-name :model/Table) :table]
                                 [:= :table.id :field.table_id]]
                    :where      [:and [:= :table.db_id database-id]
                                 [:not= :table.name "DATABASECHANGELOG"]
@@ -113,8 +113,8 @@
                                 [:not= :table.name "DATABASECHANGELOG_FIRST_RUN"]
                                 [:not [:like :table.name "QRTZ_%"]]
                                 [:not [:exists ^:allow-subquery {:select     [1]
-                                                                 :from       [[:metabase_field :self_field]]
-                                                                 :inner-join [[:metabase_table :self_table]
+                                                                 :from       [[(t2/table-name :model/Field) :self_field]]
+                                                                 :inner-join [[(t2/table-name :model/Table) :self_table]
                                                                               [:= :self_table.id :self_field.table_id]]
                                                                  :where      [:and
                                                                               [:= :self_table.db_id :table.db_id]

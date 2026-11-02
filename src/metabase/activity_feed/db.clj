@@ -67,7 +67,7 @@
                           [:and
                            [:= :model "dashboard"]
                            [:= :d.id :model_id]]
-                          [:metabase_table :t]
+                          [(t2/table-name :model/Table) :t]
                           [:and
                            [:= :model "table"]
                            [:= :t.id :model_id]]]}))
@@ -284,7 +284,7 @@
                        [:db.name :database-name]
                        [:db.id :db_id]
                        [:db.initial_sync_status :initial-sync-status]]
-              :from [[:metabase_table :t]]
+              :from [[(t2/table-name :model/Table) :t]]
               :where [:and
                       [:or
                        [:= :visibility_type nil]

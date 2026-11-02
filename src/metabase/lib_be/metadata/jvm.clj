@@ -222,7 +222,7 @@
   [query-type model parsed-args honeysql]
   (merge (next-method query-type model parsed-args honeysql)
          {:select [:id :db_id :name :display_name :schema :active :visibility_type :database_require_filter]
-          :from   [:metabase_table]}))
+          :from   [(t2/table-name :model/Table)]}))
 
 (t2/define-after-select :metadata/table
   [table]
@@ -291,7 +291,7 @@
                 :dimension/type
                 :values/human_readable_values
                 :values/values]
-    :from      [[:metabase_field :field]]
+    :from      [[(t2/table-name :model/Field) :field]]
     :left-join [[(t2/table-name :model/Table) :table]
                 [:= :field/table_id :table/id]
                 [(t2/table-name :model/Dimension) :dimension]

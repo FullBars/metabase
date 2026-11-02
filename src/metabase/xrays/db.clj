@@ -64,7 +64,7 @@
                                                          [[:count [:case [:in :f.semantic_type ["type/PK" "type/FK"]]
                                                                    [:inline 1] :else [:inline nil]]]
                                                           :count_pks_and_fks]]
-                                              :from     [[:metabase_field :f]]
+                                              :from     [[(t2/table-name :model/Field) :f]]
                                               :where    [:= :f.active true]
                                               :group-by [:f.table_id]} :ts]
                            [:and [:= :ts.table_id :id]

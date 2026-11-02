@@ -623,7 +623,7 @@
   "The distinct `:schema` rows of the active Tables in the Database with `database-id`, ordered by schema."
   [database-id :- ::lib.schema.id/database]
   (t2/query {:select-distinct [:schema]
-             :from            [:metabase_table]
+             :from            [(t2/table-name :model/Table)]
              :where           [:and [:= :db_id database-id] [:= :active true]]
              :order-by        [[:schema :asc]]}))
 
@@ -667,7 +667,7 @@
    table :- :string]
   (t2/select-one :model/QueryTable
                  {:select [[:t.id :table-id] [:t.name :table] [:t.schema :schema]]
-                  :from      [[:metabase_table :t]]
+                  :from      [[(t2/table-name :model/Table) :t]]
                   :where  [:and
                            [:= :t.db_id db-id]
                            (table-match-clause {:schema schema :table table})]}))
@@ -682,7 +682,7 @@
                            [:table :string]]]]
   (t2/select :model/QueryTable
              {:select [[:t.id :table-id] [:t.name :table] [:t.schema :schema]]
-              :from      [[:metabase_table :t]]
+              :from      [[(t2/table-name :model/Table) :t]]
               :where  [:and
                        [:= :t.db_id db-id]
                        (into [:or] (map table-match-clause) tables)]}))

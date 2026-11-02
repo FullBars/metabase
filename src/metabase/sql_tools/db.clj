@@ -13,7 +13,7 @@
   [database-id :- ::lib.schema.id/database
    table-names :- [:sequential :string]]
   (t2/select-pks-set :model/Table
-                     {:from  [:metabase_table]
+                     {:from  [(t2/table-name :model/Table)]
                       :where [:and
                               [:= :db_id database-id]
                               ;; `lower()` cannot use an index on the name column, but it still beats fetching every

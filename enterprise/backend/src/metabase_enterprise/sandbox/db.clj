@@ -62,7 +62,7 @@
   (t2/select :model/Sandbox
              {:select [:s.group_id :s.table_id :t.db_id :t.schema]
               :from   [[:sandboxes :s]]
-              :join   [[:metabase_table :t]
+              :join   [[(t2/table-name :model/Table) :t]
                        [:= :s.table_id :t.id]]
               :where  [:and
                        (when group-id [:= :s.group_id group-id])
@@ -82,7 +82,7 @@
                 [:table.db_id :db_id]
                 [:table.schema :schema]]
     :from      [[:sandboxes]]
-    :left-join [[:metabase_table :table]
+    :left-join [[(t2/table-name :model/Table) :table]
                 [:= :sandboxes.table_id :table.id]]
     :where     [:and
                 [:in :sandboxes.group_id group-ids]
@@ -171,7 +171,7 @@
   [table-id :- ::lib.schema.id/table]
   (t2/select-one :model/Database
                  :id ^:allow-subquery {:select [:t.db_id]
-                                       :from      [[:metabase_table :t]]
+                                       :from      [[(t2/table-name :model/Table) :t]]
                                        :where  [:= :t.id table-id]}))
 
 (mu/defn fields-of-table-named

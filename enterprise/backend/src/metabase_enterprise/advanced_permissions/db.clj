@@ -42,7 +42,7 @@
    database-ids :- [:sequential ::lib.schema.id/database]]
   (t2/query {:select [[:t.db_id :db_id]]
              :from   [[(t2/table-name :model/Sandbox) :s]]
-             :join   [[:metabase_table :t]
+             :join   [[(t2/table-name :model/Table) :t]
                       [:= :s.table_id :t.id]]
              :where  [:and
                       [:= :s.group_id group-id]
@@ -84,7 +84,7 @@
    group-ids   :- [:sequential ms/PositiveInt]]
   (t2/query {:select [[:s.group_id :group_id]]
              :from   [[(t2/table-name :model/Sandbox) :s]]
-             :join   [[:metabase_table :t]
+             :join   [[(t2/table-name :model/Table) :t]
                       [:= :t.id :s.table_id]]
              :where  [:and
                       [:in :s.group_id group-ids]

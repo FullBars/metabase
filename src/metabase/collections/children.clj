@@ -789,7 +789,7 @@
             [:t.db_id :database_id]
             [[:!= :t.archived_at nil] :archived]
             [(h2x/literal "table") :model]]
-   :from   [[:metabase_table :t]]
+   :from   [[(t2/table-name :model/Table) :t]]
    :where  [:and
             [:= :t.is_published true]
             (poison-when-pinned-clause pinned-state)

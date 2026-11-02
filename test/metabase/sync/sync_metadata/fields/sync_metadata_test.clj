@@ -475,7 +475,7 @@
     (testing "broken row gets healed even when base_type does not change"
       (mt/with-temp [:model/Field             {field-id :id} {:base_type :type/Number :effective_type :type/Number}
                      :model/FieldUserSettings _              {:field_id field-id :effective_type :type/Text}]
-        (t2/update! :metabase_field :id field-id {:effective_type "type/Text"})
+        (t2/update! (t2/table-name :model/Field) :id field-id {:effective_type "type/Text"})
         (perform-updates!
          (merge default-metadata
                 {:base-type :type/Number})

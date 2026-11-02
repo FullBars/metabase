@@ -241,10 +241,10 @@
   [field-id :- ::lib.schema.id/field]
   (t2/select :model/Field
              {:with-recursive [[[:parents ^:allow-subquery {:columns [:id :name :parent_id :table_id]}]
-                                ^:allow-subquery {:union-all [^:allow-subquery {:from   [[:metabase_field :mf]]
+                                ^:allow-subquery {:union-all [^:allow-subquery {:from   [[(t2/table-name :model/Field) :mf]]
                                                                                 :select [:mf.id :mf.name :mf.parent_id :mf.table_id]
                                                                                 :where  [:= :id field-id]}
-                                                              ^:allow-subquery {:from   [[:metabase_field :pf]]
+                                                              ^:allow-subquery {:from   [[(t2/table-name :model/Field) :pf]]
                                                                                 :select [:pf.id :pf.name :pf.parent_id :pf.table_id]
                                                                                 :join   [[:parents :p] [:= :p.parent_id :pf.id]]}]}]]
               :from           [:parents]

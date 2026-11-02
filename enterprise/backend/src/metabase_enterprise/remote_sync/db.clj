@@ -226,20 +226,20 @@
   (case model-key
     :model/TableUserSettings {:alias  "t"
                               :select [:t.name [:t.id :table_id] :t.collection_id [:t.name :table_name]]
-                              :from   [[:metabase_table :t]]}
+                              :from   [[(t2/table-name :model/Table) :t]]}
     (:model/FieldUserSettings :model/Dimension)
     {:alias  "f"
      :select [:f.name :f.table_id [:t.collection_id :collection_id] [:t.name :table_name]]
      :from   [[:metabase_field :f]]
-     :join   [[:metabase_table :t] [:= :f.table_id :t.id]]}
+     :join   [[(t2/table-name :model/Table) :t] [:= :f.table_id :t.id]]}
     :model/Segment {:alias  "s"
                     :select [:s.name :s.table_id [:t.collection_id :collection_id] [:t.name :table_name]]
                     :from   [[:segment :s]]
-                    :join   [[:metabase_table :t] [:= :s.table_id :t.id]]}
+                    :join   [[(t2/table-name :model/Table) :t] [:= :s.table_id :t.id]]}
     :model/Measure {:alias  "s"
                     :select [:s.name :s.table_id [:t.collection_id :collection_id] [:t.name :table_name]]
                     :from   [[:measure :s]]
-                    :join   [[:metabase_table :t] [:= :s.table_id :t.id]]}))
+                    :join   [[(t2/table-name :model/Table) :t] [:= :s.table_id :t.id]]}))
 
 (mu/defn tracking-details-by-id
   "The name, table id, collection id, and table name of the `model-key` (TableUserSettings, FieldUserSettings,
@@ -299,7 +299,7 @@
 (mu/defn published-table-ids :- [:set ::lib.schema.id/table]
   "The ids of the Tables published in the Collections with `collection-ids`."
   [collection-ids :- [:sequential ::lib.schema.id/collection]]
-  (set (t2/select-pks-set :model/Table {:from  [[:metabase_table :t]]
+  (set (t2/select-pks-set :model/Table {:from  [[(t2/table-name :model/Table) :t]]
                                         :where [:and [:= :t.is_published true] [:in :t.collection_id collection-ids]]})))
 
 (mu/defn table-ids-with-user-settings
@@ -313,7 +313,7 @@
   (t2/select-fn-vec :field_id :model/FieldUserSettings
                     {:select [:u.field_id]
                      :from   [[(t2/table-name :model/FieldUserSettings) :u]]
-                     :join   [[:metabase_field :f] [:= :f.id :u.field_id]]
+                     :join   [[(t2/table-name :model/Field) :f] [:= :f.id :u.field_id]]
                      :where  [:in :f.table_id table-ids]}))
 
 (mu/defn field-ids-with-dimensions
@@ -322,7 +322,7 @@
   (t2/select-fn-vec :field_id :model/Dimension
                     {:select [:d.field_id]
                      :from   [[(t2/table-name :model/Dimension) :d]]
-                     :join   [[:metabase_field :f] [:= :f.id :d.field_id]]
+                     :join   [[(t2/table-name :model/Field) :f] [:= :f.id :d.field_id]]
                      :where  [:in :f.table_id table-ids]}))
 
 (mu/defn delete-dimensions!

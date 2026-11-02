@@ -51,9 +51,9 @@
                           [:not [:in output-table-id tables]])]
     (t2/reducible-query {:select [[output-table-id :table_id]]
                          :from   [[(t2/table-name :model/Dimension) :dim]]
-                         :join   [[:metabase_field :source_field]
+                         :join   [[(t2/table-name :model/Field) :source_field]
                                   [:= :dim.field_id :source_field.id]
-                                  [:metabase_field :target_field]
+                                  [(t2/table-name :model/Field) :target_field]
                                   [:= :dim.human_readable_field_id :target_field.id]]
                          :where  [:and
                                   [:= :dim.type "external"]

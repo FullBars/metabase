@@ -18,10 +18,10 @@
    target-field-id :- ::lib.schema.id/field]
   (t2/query {:select [[:source_t.db_id :source_db_id]
                       [:target_t.db_id :target_db_id]]
-             :from      [[:metabase_field :sf]]
-             :join   [[:metabase_table :source_t] [:= :sf.table_id :source_t.id]
-                      [:metabase_field :tf] [:= :tf.id target-field-id]
-                      [:metabase_table :target_t] [:= :tf.table_id :target_t.id]]
+             :from      [[(t2/table-name :model/Field) :sf]]
+             :join   [[(t2/table-name :model/Table) :source_t] [:= :sf.table_id :source_t.id]
+                      [(t2/table-name :model/Field) :tf] [:= :tf.id target-field-id]
+                      [(t2/table-name :model/Table) :target_t] [:= :tf.table_id :target_t.id]]
              :where  [:= :sf.id source-field-id]}))
 
 (mu/defn field

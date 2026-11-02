@@ -595,7 +595,7 @@
   "The distinct `:collection_id`s of the published, unarchived Tables in the Collections with `collection-ids`."
   [collection-ids]
   (t2/query {:select-distinct [:collection_id]
-             :from            [:metabase_table]
+             :from            [(t2/table-name :model/Table)]
              :where           [:and
                                [:= :is_published true]
                                [:= :archived_at nil]

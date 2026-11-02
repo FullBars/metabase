@@ -341,7 +341,7 @@
                            nil))]
     {:table-name (case entity-type
                    :card :report_card
-                   :table :metabase_table
+                   :table (t2/table-name :model/Table)
                    :transform :transform
                    :snippet :native_query_snippet
                    :dashboard :report_dashboard
@@ -514,7 +514,7 @@
     (:collection joins) (conj :collection [:= :entity.collection_id :collection.id])
     (:dashboard joins) (conj [:report_dashboard :dashboard] [:= :entity.dashboard_id :dashboard.id])
     (:document joins) (conj :document [:= :entity.document_id :document.id])
-    (:table joins) (conj [:metabase_table :table] [:= :entity.table_id :table.id])))
+    (:table joins) (conj [(t2/table-name :model/Table) :table] [:= :entity.table_id :table.id])))
 
 (mu/defn- dependency-item-select :- ::h2x/honeysql-clause-opts
   "The per-entity-type SELECT that [[dependency-item-ids]] and [[dependency-item-count]] union together, matching
@@ -1070,7 +1070,7 @@
   "The IDs of the Tables of the Fields remapped to one of the Fields with `field-ids` as their human-readable field."
   [field-ids :- [:set ::lib.schema.id/field]]
   (or (t2/select-fn-set :table_id [:model/Field :metabase_field.table_id]
-                        {:from  [:metabase_field]
+                        {:from  [(t2/table-name :model/Field)]
                          :join  [:dimension [:= :dimension.field_id :metabase_field.id]]
                          :where [:in :dimension.human_readable_field_id field-ids]})
       #{}))

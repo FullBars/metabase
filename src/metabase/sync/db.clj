@@ -182,7 +182,7 @@
 (mu/defn sync-table-ids
   "The IDs of the synced Tables of the Database with `database-id`."
   [database-id :- ::lib.schema.id/database]
-  (t2/select-fn-vec :id :model/Table :db_id database-id {:where (sync-tables-clause :metabase_table)}))
+  (t2/select-fn-vec :id :model/Table :db_id database-id {:where (sync-tables-clause (t2/table-name :model/Table))}))
 
 (mu/defn sync-table-schemas
   "The distinct `:schema` rows of the synced Tables of the Database with `database-id`."
@@ -194,7 +194,7 @@
 (mu/defn sync-tables-count
   "The number of synced Tables in the Database with `database-id`."
   [database-id :- ::lib.schema.id/database]
-  (t2/count :model/Table :db_id database-id {:where (sync-tables-clause :metabase_table)}))
+  (t2/count :model/Table :db_id database-id {:where (sync-tables-clause (t2/table-name :model/Table))}))
 
 (mu/defn sync-tables-reducible
   "Reducible synced Tables of the Database with `database-id` ordered by schema and name, optionally narrowed to
@@ -204,7 +204,7 @@
    table-names  :- [:maybe [:or [:set :string] [:sequential :string]]]]
   (t2/reducible-select :model/Table
                        :db_id database-id
-                       {:where    [:and (sync-tables-clause :metabase_table)
+                       {:where    [:and (sync-tables-clause (t2/table-name :model/Table))
                                    (when (seq schema-names) [:in :schema schema-names])
                                    (when (seq table-names) [:in :name table-names])]
                         :order-by [[:schema :asc] [:name :asc]]}))
@@ -214,10 +214,10 @@
   [database-id :- ::lib.schema.id/database]
   (t2/reducible-select :model/Table
                        {:select    [:t.*]
-                        :from      [[:metabase_table :t]]
+                        :from      [[(t2/table-name :model/Table) :t]]
                         :left-join [[^:allow-subquery {:select   [:table_id
                                                                   [[:min :last_analyzed] :earliest_last_analyzed]]
-                                                       :from     [:metabase_field]
+                                                       :from     [(t2/table-name :model/Field)]
                                                        :group-by [:table_id]} :sub]
                                     [:= :t.id :sub.table_id]]
                         :where     [:and (sync-tables-clause :t) [:= :t.db_id database-id]]
@@ -408,7 +408,7 @@
    [:= :dimension_interestingness nil]
    [:not-in :visibility_type ["sensitive" "retired"]]
    [:in :table_id ^:allow-subquery {:select [:id]
-                                    :from   [:metabase_table]
+                                    :from   [(t2/table-name :model/Table)]
                                     :where  [:= :db_id database-id]}]])
 
 (mu/defn unscored-field-ids-for-database :- [:sequential ::lib.schema.id/field]
@@ -425,7 +425,7 @@
   ;; backfill has caught up
   (or (t2/select-fn-vec :id :model/Field
                         {:select   [:id]
-                         :from     [:metabase_field]
+                         :from     [(t2/table-name :model/Field)]
                          :where    [:and (unscored-fields-clause database-id) [:> :id after-id]]
                          :order-by [[:id :asc]]
                          :limit    limit})
@@ -453,8 +453,8 @@
   [database-id        :- ::lib.schema.id/database
    schema+table+names :- [:sequential [:tuple :string :string :string]]]
   (t2/reducible-query {:select     [[:f.id]]
-                       :from      [[:metabase_field :f]]
-                       :inner-join [[:metabase_table :t] [:= :f.table_id :t.id]]
+                       :from      [[(t2/table-name :model/Field) :f]]
+                       :inner-join [[(t2/table-name :model/Table) :t] [:= :f.table_id :t.id]]
                        :where      [:and
                                     [:in [:composite [:coalesce :t.schema "__null__"] :t.name :f.name] schema+table+names]
                                     [:= :t.db_id database-id]
@@ -471,7 +471,7 @@
   (t2/select-pks-set :model/Field
                      {}
                      :table_id [:in ^:allow-subquery {:select [[:t.id]]
-                                                      :from   [[:metabase_table :t]]
+                                                      :from   [[(t2/table-name :model/Table) :t]]
                                                       :where  [:= :t.db_id database-id]}]
                      :parent_id nil
                      :database_indexed true))
@@ -556,8 +556,8 @@
   [db-id table-schema table-name column-name]
   ^:allow-subquery
   {:select    [[[:min :f.id] :id]]
-   :from      [[:metabase_field :f]]
-   :join      [[:metabase_table :t] [:= :f.table_id :t.id]]
+   :from      [[(t2/table-name :model/Field) :f]]
+   :join      [[(t2/table-name :model/Table) :t] [:= :f.table_id :t.id]]
    :left-join [[:metabase_field_user_settings :u] [:= :f.id :u.field_id]]
    :where     [:and
                [:= [:coalesce :u.fk_target_field_id_set false] false]
@@ -624,8 +624,8 @@
    rescan-public? :- [:maybe :boolean]]
   (t2/select-fn-set :table_id :model/Field
                     {:select   [[:metabase_field.table_id :table_id]]
-                     :from     [:metabase_field]
-                     :join     [:metabase_table [:= :metabase_field.table_id :metabase_table.id]]
+                     :from     [(t2/table-name :model/Field)]
+                     :join     [(t2/table-name :model/Table) [:= :metabase_field.table_id :metabase_table.id]]
                      :where    [:and
                                 [:= :metabase_table.db_id database-id]
                                 [:= :metabase_table.active true]

@@ -37,9 +37,9 @@
    exclude-table-ids  :- [:set ::lib.schema.id/table]]
   (t2/reducible-query {:select [[output-table-id :table_id]]
                        :from   [[(t2/table-name :model/Dimension) :dim]]
-                       :join   [[:metabase_field :source_field]
+                       :join   [[(t2/table-name :model/Field) :source_field]
                                 [:= :dim.field_id :source_field.id]
-                                [:metabase_field :target_field]
+                                [(t2/table-name :model/Field) :target_field]
                                 [:= :dim.human_readable_field_id :target_field.id]]
                        :where  [:and
                                 [:= :dim.type "external"]
@@ -56,17 +56,17 @@
   (let [where (table-selectors-where selectors)]
     (t2/reducible-query {:select [[output-table-id :table_id]]
                          :from   [[(t2/table-name :model/Dimension) :dim]]
-                         :join   [[:metabase_field :source_field]
+                         :join   [[(t2/table-name :model/Field) :source_field]
                                   [:= :dim.field_id :source_field.id]
-                                  [:metabase_field :target_field]
+                                  [(t2/table-name :model/Field) :target_field]
                                   [:= :dim.human_readable_field_id :target_field.id]]
                          :where  [:and
                                   [:= :dim.type "external"]
                                   [:in input-table-id ^:allow-subquery
-                                   {:select [:id] :from [:metabase_table] :where where}]
+                                   {:select [:id] :from [(t2/table-name :model/Table)] :where where}]
                                   [:not [:exists ^:allow-subquery
                                          {:select [1]
-                                          :from   [:metabase_table]
+                                          :from   [(t2/table-name :model/Table)]
                                           :where  [:and where [:= :id output-table-id]]}]]]})))
 
 (mu/defn database

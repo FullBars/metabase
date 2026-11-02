@@ -161,7 +161,7 @@
   "The Database id and schema of the Tables of the non-internal Databases."
   []
   (t2/query {:select [:t.db_id :t.schema]
-             :from      [[:metabase_table :t]]
+             :from      [[(t2/table-name :model/Table) :t]]
              :join   [[(t2/table-name :model/Database) :d] [:= :d.id :t.db_id]]
              :where  (mi/exclude-internal-content-hsql :model/Database :table-alias :d)}))
 
@@ -169,8 +169,8 @@
   "The Table id of the Fields of the non-internal Databases."
   []
   (t2/query {:select [:f.table_id]
-             :from      [[:metabase_field :f]]
-             :join [[:metabase_table :t] [:= :t.id :f.table_id]
+             :from      [[(t2/table-name :model/Field) :f]]
+             :join [[(t2/table-name :model/Table) :t] [:= :t.id :f.table_id]
                     [(t2/table-name :model/Database) :d] [:= :d.id :t.db_id]]
              :where (mi/exclude-internal-content-hsql :model/Database :table-alias :d)}))
 

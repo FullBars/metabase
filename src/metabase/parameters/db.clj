@@ -29,9 +29,9 @@
   [field-id mapping-type]
   ^:allow-subquery
   {:select    [[:dest.id :id] [(mapping-type-name->code mapping-type) :mapping_type]]
-   :from      [[:metabase_field :source]]
+   :from      [[(t2/table-name :model/Field) :source]]
    :left-join [[:metabase_table :table] [:= :source.table_id :table.id]
-               [:metabase_field :dest] [:= :dest.table_id :table.id]]
+               [(t2/table-name :model/Field) :dest] [:= :dest.table_id :table.id]]
    :where     [:and
                [:= :source.id field-id]
                (mdb/isa :source.semantic_type :type/PK)
@@ -62,7 +62,7 @@
                                         (implicit-pk->name-mapping-query
                                          ^:allow-subquery
                                          {:select [:fk_target_field_id]
-                                          :from   [:metabase_field]
+                                          :from   [(t2/table-name :model/Field)]
                                           :where  [:and
                                                    [:= :id field-id]
                                                    (mdb/isa :semantic_type :type/FK)]
@@ -166,12 +166,12 @@
                           [:fk-table.id :t1]
                           [:pk-field.id :f2]
                           [:pk-field.table_id :t2]]
-              :from      [[:metabase_field :fk-field]]
+              :from      [[(t2/table-name :model/Field) :fk-field]]
               :left-join [[:metabase_table :fk-table]    [:and [:= :fk-field.table_id :fk-table.id]
                                                           :fk-table.active]
                           [:metabase_database :database] [:= :fk-table.db_id :database.id]
-                          [:metabase_field :pk-field] [:and [:= :fk-field.fk_target_field_id :pk-field.id]
-                                                       :pk-field.active]]
+                          [(t2/table-name :model/Field) :pk-field] [:and [:= :fk-field.fk_target_field_id :pk-field.id]
+                                                                    :pk-field.active]]
               :where     [:and
                           [:= :database.id database-id]
                           [:not= :fk-field.fk_target_field_id nil]

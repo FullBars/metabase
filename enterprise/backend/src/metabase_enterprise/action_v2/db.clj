@@ -56,7 +56,7 @@
   [table-id :- ::lib.schema.id/table
    names    :- [:sequential :string]]
   (t2/query {:select [:id [[:lower :name] :lower_name]]
-             :from   [:metabase_field]
+             :from   [(t2/table-name :model/Field)]
              :where  [:and
                       [:= :table_id table-id]
                       [:in [:lower :name] (map u/lower-case-en names)]

@@ -108,7 +108,7 @@
   [database-id :- ::lib.schema.id/database]
   (if-let [action-ids (not-empty (into (t2/select-fn-set :action_id :model/QueryAction :database_id database-id)
                                        (t2/select-fn-set :action_id :model/ImplicitAction
-                                                         {:join  [[:metabase_table :table]
+                                                         {:join  [[(t2/table-name :model/Table) :table]
                                                                   [:= :table.id :implicit_action.table_id]]
                                                           :where [:= :table.db_id database-id]})))]
     (t2/delete! :model/Action :id [:in action-ids])
