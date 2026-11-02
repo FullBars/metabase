@@ -95,6 +95,15 @@
                                                   e))))]
       [(some-> start u.date/parse) (some-> end u.date/parse)])))
 
+(api.macros/defendpoint :post "/run" :- ::transform-testing.schema/run-result
+  "Run a transform test that is not saved, of a transform that need not be saved either, as `POST /:id/run` runs a
+  saved one."
+  [_route-params
+   _query-params
+   body :- ::transform-testing.schema/adhoc-run.request]
+  (api/create-check :model/Transform (:transform body))
+  (refusing #(transform-testing.runner/run-adhoc-transform-test! body)))
+
 (api.macros/defendpoint :get "/:id/run" :- ::transform-testing.schema/transform-test-runs.response
   "List the runs of a transform test, newest first."
   [{:keys [id]} :- [:map {:closed true}

@@ -30,9 +30,6 @@
 
 (mr/def ::transform-target ::transforms.schema/transform-target)
 
-(mr/def ::run-trigger
-  [:enum "none" "global-schedule"])
-
 (def ^:private CreatorResponse
   [:map {:closed true}
    [:id pos-int?]
@@ -169,16 +166,7 @@
   "Create a new transform."
   [_route-params
    _query-params
-   body :- [:map {:closed true}
-            [:name :string]
-            [:description {:optional true} [:maybe :string]]
-            [:source ::transforms.schema/transform-source]
-            [:target ::transforms.schema/transform-target]
-            [:run_trigger {:optional true} ::run-trigger]
-            [:tag_ids {:optional true} [:sequential ms/PositiveInt]]
-            [:collection_id {:optional true} [:maybe ms/PositiveInt]]
-            [:owner_user_id {:optional true} [:maybe ms/PositiveInt]]
-            [:owner_email {:optional true} [:maybe :string]]]]
+   body :- ::transforms.schema/transform.create]
   (transforms.core/check-feature-enabled! body)
   (api/create-check :model/Transform body)
   (transforms.core/check-database-feature body)
@@ -300,7 +288,7 @@
             [:description {:optional true} [:maybe :string]]
             [:source {:optional true} ::transforms.schema/transform-source]
             [:target {:optional true} ::transforms.schema/transform-target]
-            [:run_trigger {:optional true} ::run-trigger]
+            [:run_trigger {:optional true} ::transforms.schema/run-trigger]
             [:tag_ids {:optional true} [:sequential ms/PositiveInt]]
             [:collection_id {:optional true} [:maybe ms/PositiveInt]]
             [:owner_user_id {:optional true} [:maybe ms/PositiveInt]]

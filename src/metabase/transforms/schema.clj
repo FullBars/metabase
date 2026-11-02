@@ -158,6 +158,29 @@
    [:table_dependencies    {:optional true} [:maybe [:sequential ::transform.table-dependency]]]
    [:run_trigger           {:optional true} [:maybe [:or :keyword :string]]]])
 
+(mr/def ::run-trigger
+  "What starts a Transform run: nothing, or the global schedule."
+  [:enum "none" "global-schedule"])
+
+(mr/def ::transform.content
+  "What a Transform computes and where it writes, as a client writes it."
+  [:map {:closed true}
+   [:name        :string]
+   [:description {:optional true} [:maybe :string]]
+   [:source      ::transform-source]
+   [:target      ::transform-target]])
+
+(mr/def ::transform.create
+  "What a client sends to create a Transform."
+  [:merge
+   ::transform.content
+   [:map {:closed true}
+    [:run_trigger   {:optional true} ::run-trigger]
+    [:tag_ids       {:optional true} [:sequential ms/PositiveInt]]
+    [:collection_id {:optional true} [:maybe ms/PositiveInt]]
+    [:owner_user_id {:optional true} [:maybe ms/PositiveInt]]
+    [:owner_email   {:optional true} [:maybe :string]]]])
+
 (mr/def ::transform-dag-run
   "A TransformDagRun as selected from the app DB: every column of `:transform_dag_run`."
   [:merge
