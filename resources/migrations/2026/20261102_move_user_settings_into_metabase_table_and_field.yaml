@@ -1,8 +1,8 @@
 ## metabase_table and metabase_field hold what users see again, with metabase_table_user_settings and
 ## metabase_field_user_settings recording which of those values users set. Since v64 user edits went only to the
 ## settings tables and were applied on read; these changesets copy every user-set value into its Table or Field
-## row. The settings columns that no longer carry information (caveats_set, points_of_interest_set and nfc_path) stay
-## for releases that still read them, unused.
+## row, and clear the caveats and points_of_interest no user set. The settings columns that no longer carry
+## information (caveats_set, points_of_interest_set and nfc_path) stay for releases that still read them, unused.
 
 databaseChangeLog:
   - changeSet:
@@ -142,3 +142,16 @@ databaseChangeLog:
                   data_sensitivity = CASE WHEN s.data_sensitivity IS NOT NULL THEN s.data_sensitivity ELSE t.data_sensitivity END,
                   custom_position = CASE WHEN s.custom_position IS NOT NULL THEN s.custom_position ELSE t.custom_position END
       rollback: # not necessary; the user values stay in metabase_field_user_settings
+
+  - changeSet:
+      id: 1h91ve
+      author: ranquild
+      comment: Clear the caveats and points_of_interest that their unset flags said no user set, since a value now means a user set it
+      changes:
+        - sql:
+            sql: >-
+              UPDATE metabase_table_user_settings
+              SET caveats = CASE WHEN caveats_set = TRUE THEN caveats ELSE NULL END,
+                  points_of_interest = CASE WHEN points_of_interest_set = TRUE THEN points_of_interest ELSE NULL END
+              WHERE caveats_set = FALSE OR points_of_interest_set = FALSE
+      rollback: # not necessary; the cleared values were not shown to users

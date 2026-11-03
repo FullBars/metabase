@@ -3559,8 +3559,8 @@
                  (into {} (map (juxt identity user-visibility)) [hidden technical cruft visible unpublished]))))))))
 
 (deftest move-user-settings-into-metabase-table-and-field-test
-  (testing "ceygl0, ziqcir: user-set values move into metabase_table and metabase_field"
-    (impl/test-migrations ["ceygl0" "ziqcir"] [migrate!]
+  (testing "ceygl0, ziqcir, 1h91ve: user-set values move into metabase_table and metabase_field"
+    (impl/test-migrations ["ceygl0" "1h91ve"] [migrate!]
       (let [db-id         (t2/insert-returning-pk! :metabase_database {:name       "Move User Settings Test DB"
                                                                        :engine     "h2"
                                                                        :created_at :%now
@@ -3642,9 +3642,9 @@
         :else                                   x))
 
 (deftest move-user-settings-follows-flags-and-pairs-test
-  (testing "ceygl0, ziqcir: a false flag keeps the synced value, a true flag copies NULL, and a column that follows
-           another moves with it"
-    (impl/test-migrations ["ceygl0" "ziqcir"] [migrate!]
+  (testing "ceygl0, ziqcir, 1h91ve: a false flag keeps the synced value and clears the settings value, a true flag
+           copies NULL, and a column that follows another moves with it"
+    (impl/test-migrations ["ceygl0" "1h91ve"] [migrate!]
       (let [db-id     (t2/insert-returning-pk! :metabase_database {:name "Flags Test DB" :engine "h2" :created_at :%now
                                                                    :updated_at :%now :details "{}"})
             coll-id   (t2/insert-returning-pk! :collection {:name "c" :slug "c" :created_at :%now
@@ -3692,7 +3692,9 @@
                      :caveats "synced caveats" :collection_id nil}
                     table))
             (is (false? (app-db-boolean (:show_in_getting_started table))))
-            (is (false? (app-db-boolean (:is_published table))) "collection_id follows is_published")))
+            (is (false? (app-db-boolean (:is_published table))) "collection_id follows is_published"))
+          (testing "a settings value whose flag said no user set it is cleared"
+            (is (nil? (:caveats (t2/select-one :metabase_table_user_settings :table_id table-id))))))
         (let [field (t2/select-one :metabase_field :id flagged)]
           (testing "a Field"
             (is (=? {:semantic_type nil :fk_target_field_id nil :description "synced" :has_field_values "list"
