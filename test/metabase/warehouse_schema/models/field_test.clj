@@ -352,7 +352,7 @@
                                                               :visibility_type  :sensitive
                                                               :display_name     "User Name"})
       (field-user-settings/delete-field-user-settings! [field-id])
-      (is (=? {:semantic_type :type/Email :visibility_type :sensitive :display_name "Sync Name"}
+      (is (=? {:semantic_type :type/Email :visibility_type :normal :display_name "Sync Name"}
               (t2/select-one :model/Field :id field-id)))
       (is (nil? (t2/select-one :model/FieldUserSettings :field_id field-id))))))
 

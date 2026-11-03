@@ -73,9 +73,10 @@
   [field column]
   (case column
     :display_name    (humanization/name->human-readable-name (:name field))
+    :visibility_type :normal
     :effective_type  (:base_type field)
     :custom_position 0
-    (:semantic_type :description :visibility_type :has_field_values :fk_target_field_id :json_unfolding) ::keep
+    (:semantic_type :description :has_field_values :fk_target_field_id :json_unfolding) ::keep
     nil))
 
 (mu/defn- write-user-values!
@@ -124,11 +125,12 @@
       (warehouse-schema.db/update-field-custom-positions! field-id->position))))
 
 (mu/defn unset-field-user-settings!
-  "Drop the user values of the Field columns `ks` for `field`, putting their system values back in its row."
+  "Drop the user values of the Field columns `ks` for `field`, writing into its row the system value of each that has
+  one."
   [{:keys [id]} :- ::warehouse-schema.schema/field
    ks           :- [:sequential (into [:enum] user-settings/user-settable-field-columns)]]
-  (when-let [existing (warehouse-schema.db/field-user-settings id)]
-    (t2/with-transaction [_]
+  (t2/with-transaction [_]
+    (when-let [existing (warehouse-schema.db/field-user-settings id)]
       (warehouse-schema.db/update-field-user-settings!
        id
        (into {} (mapcat (fn [k]
@@ -138,7 +140,8 @@
       (write-user-values! id (user-settings/user-set-field-columns existing)))))
 
 (mu/defn delete-field-user-settings!
-  "Delete the settings of the Fields with `field-ids`, putting the system values of what they set back in their rows."
+  "Delete the settings of the Fields with `field-ids`, writing into their rows the system value of each column they set
+  that has one."
   [field-ids :- [:sequential ::lib.schema.id/field]]
   (t2/with-transaction [_]
     (doseq [settings (warehouse-schema.db/field-user-settings-for-fields field-ids)]
@@ -182,6 +185,7 @@
                :has_field_values :effective_type :coercion_strategy :caveats
                :points_of_interest :json_unfolding :settings :data_sensitivity :custom_position
                :description_set :semantic_type_set :fk_target_field_id_set]
+   :skip      [:nfc_path]
    :defaults  {:description_set        false
                :semantic_type_set      false
                :fk_target_field_id_set false}

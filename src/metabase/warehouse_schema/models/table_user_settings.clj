@@ -200,11 +200,12 @@
     (table/update-field-positions! (warehouse-schema.db/table (u/the-id table)))))
 
 (mu/defn unset-table-user-settings!
-  "Drop the user values of the Table columns `ks` for `table`, putting their system values back in its row."
+  "Drop the user values of the Table columns `ks` for `table`, writing into its row the system value of each that has
+  one."
   [{:keys [id]} :- ::warehouse-schema.schema/table
    ks           :- [:sequential (into [:enum] user-settings/user-settable-table-columns)]]
-  (when-let [existing (warehouse-schema.db/table-user-settings id)]
-    (t2/with-transaction [_]
+  (t2/with-transaction [_]
+    (when-let [existing (warehouse-schema.db/table-user-settings id)]
       (warehouse-schema.db/update-table-user-settings!
        id
        (into {} (mapcat (fn [k]
@@ -214,7 +215,8 @@
       (write-user-values! id (user-settings/user-set-table-columns existing)))))
 
 (mu/defn delete-table-user-settings!
-  "Delete the settings of the Tables with `table-ids`, putting the system values of what they set back in their rows."
+  "Delete the settings of the Tables with `table-ids`, writing into their rows the system value of each column they set
+  that has one."
   [table-ids :- [:sequential ::lib.schema.id/table]]
   (t2/with-transaction [_]
     (doseq [settings (warehouse-schema.db/table-user-settings-for-tables table-ids)]
@@ -261,6 +263,7 @@
   {:copy      [:display_name :description :entity_type :visibility_type :field_order :caveats :points_of_interest
                :show_in_getting_started :data_authority :data_source :owner_email :is_published
                :description_set :visibility_type_set :data_layer_set :data_source_set]
+   :skip      [:caveats_set :points_of_interest_set]
    :defaults  {:description_set        false
                :visibility_type_set    false
                :data_layer_set         false
