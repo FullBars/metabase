@@ -46246,3 +46246,11 @@ msgstr "深入示例"
 msgid "Total [[GenericTable]]"
 msgstr "[[GenericTable]] 总数"
 
+
+#: frontend/src/metabase/parameters/components/ParameterWidget/ParameterWidget.tsx
+msgid "{0}: same as dashboard"
+msgstr "{0}：随看板"
+
+#: frontend/src/metabase/parameters/components/ParameterWidget/ParameterWidget.tsx
+msgid "{0}: same as dashboard ({1})"
+msgstr "{0}：随看板（{1}）"

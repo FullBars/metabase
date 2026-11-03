@@ -8,12 +8,16 @@ import {
   useState,
 } from "react";
 import { usePrevious } from "react-use";
+import { t } from "ttag";
 
 import { Sortable } from "metabase/common/components/Sortable";
 import { useTranslateContent } from "metabase/content-translation/hooks";
 import CS from "metabase/css/core/index.css";
+import { formatParameterValue } from "metabase/parameters/utils/formatting";
+import { useSetting } from "metabase/settings";
 import { Box, Flex } from "metabase/ui";
 import type { UiParameter } from "metabase-lib/v1/parameters/types";
+import { parameterHasNoDisplayValue } from "metabase-lib/v1/parameters/utils/parameter-values";
 import type {
   CardId,
   DashboardId,
@@ -94,6 +98,26 @@ export const ParameterWidget = ({
 
   const legend = fieldHasValueOrFocus ? maybeTranslatedParameterName : "";
 
+  const formattingSettings = useSetting("custom-formatting");
+  const placeholder = useMemo(() => {
+    const fallback = parameters?.find(
+      (p) => p.id === parameter.fallback_parameter_id,
+    );
+    if (!fallback) {
+      return parameter.name;
+    }
+    if (fallback.value == null || parameterHasNoDisplayValue(fallback.value)) {
+      return t`${maybeTranslatedParameterName}: same as dashboard`;
+    }
+    const fallbackValue = formatParameterValue(
+      // The same value the dashboard filter's own widget formats (ParameterValueWidget takes `any`).
+      fallback.value as Parameters<typeof formatParameterValue>[0],
+      fallback,
+      formattingSettings,
+    );
+    return t`${maybeTranslatedParameterName}: same as dashboard (${fallbackValue})`;
+  }, [parameter, parameters, formattingSettings, maybeTranslatedParameterName]);
+
   const popoverOffset = useMemo(() => {
     const crossAxisOffset = 0;
     const mainAxis = 4;
@@ -153,7 +177,7 @@ export const ParameterWidget = ({
         value={parameter.value}
         setValue={(value) => setValue?.(value)}
         isEditing={isEditingParameter}
-        placeholder={parameter.name}
+        placeholder={placeholder}
         focusChanged={setIsFocused}
         isFullscreen={isFullscreen}
         commitImmediately={commitImmediately}

@@ -80,6 +80,9 @@
     :decode/normalize lib.schema.common/normalize-map-no-kebab-case}
    [:default              {:optional true} [:ref ::lib.schema.parameter/parameter.value]]
    [:display-name         {:optional true} [:maybe :string]]
+   ;; a dashboard filter whose value the card's own query uses while this one is empty. The frontend shows that value
+   ;; on the empty widget, e.g. "Card date: same as dashboard (This month)". It doesn't change how queries run.
+   [:fallback_parameter_id {:optional true} [:maybe ::lib.schema.parameter/id]]
    ;; TODO (Cam 9/18/25) -- why are we mixing `camelCase` and `snake_case` here? Is this to make me sad?
    [:filteringParameters  {:optional true} [:maybe [:sequential ::lib.schema.parameter/id]]]
    [:hasVariableTemplateTagTarget {:optional true} [:maybe :boolean]]

@@ -100,4 +100,60 @@ describe("ParameterWidget", () => {
     });
     expect(setValue).not.toHaveBeenCalled();
   });
+
+  describe("fallback_parameter_id", () => {
+    function setupWithFallback({
+      value,
+      fallbackValue,
+    }: {
+      value?: string;
+      fallbackValue?: string;
+    }) {
+      const dashboardDate = createMockParameter({
+        id: "period",
+        type: "date/all-options",
+        slug: "period",
+        name: "Date",
+        value: fallbackValue,
+      });
+      const cardDate = createMockParameter({
+        id: "c_line",
+        type: "date/all-options",
+        slug: "c_line",
+        name: "Card date",
+        fallback_parameter_id: "period",
+        value,
+      });
+
+      renderWithProviders(
+        <ParameterWidget
+          parameter={cardDate}
+          parameters={[dashboardDate, cardDate]}
+        />,
+      );
+    }
+
+    it("should show the dashboard filter value it falls back to when it has no value", () => {
+      setupWithFallback({ fallbackValue: "thismonth" });
+
+      expect(
+        screen.getByText("Card date: same as dashboard (This month)"),
+      ).toBeInTheDocument();
+    });
+
+    it("should say it follows the dashboard when the dashboard filter has no value either", () => {
+      setupWithFallback({});
+
+      expect(
+        screen.getByText("Card date: same as dashboard"),
+      ).toBeInTheDocument();
+    });
+
+    it("should show its own value once it has one", () => {
+      setupWithFallback({ value: "past30days", fallbackValue: "thismonth" });
+
+      expect(screen.getByText("Previous 30 days")).toBeInTheDocument();
+      expect(screen.queryByText(/same as dashboard/)).not.toBeInTheDocument();
+    });
+  });
 });

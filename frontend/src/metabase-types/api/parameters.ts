@@ -52,6 +52,8 @@ export interface Parameter extends ParameterValuesConfig {
   required?: boolean;
   options?: ParameterOptions;
   filteringParameters?: ParameterId[];
+  /** A dashboard filter whose value the card's own query uses while this one is empty. Only changes what the empty widget shows. */
+  fallback_parameter_id?: ParameterId;
   value?: ParameterValueOrArray | null;
   target?: ParameterTarget;
   temporal_units?: TemporalUnit[];

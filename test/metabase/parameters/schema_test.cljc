@@ -41,6 +41,14 @@
                               :a/b    2}])))))))
 
 #?(:clj
+   (deftest api-parameters-decode-keeps-fallback-parameter-id-test
+     (testing "A saved card filter keeps the dashboard filter it falls back to, so the widget can show its value"
+       (is (= [{:id "c_line" :type :date/all-options :fallback_parameter_id "period"}]
+              (api.macros/decode-and-validate-params
+               :body ::parameters.schema/parameters
+               [{:id "c_line" :type "date/all-options" :fallback_parameter_id "period"}]))))))
+
+#?(:clj
    (deftest api-parameter-values-decode-preserves-nested-options-test
      (testing "nested :options maps survive the JSON-string decode + strip pass with keywordized keys"
        (is (= [{:id      "_STATE_"
