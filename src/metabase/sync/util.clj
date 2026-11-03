@@ -28,6 +28,7 @@
    [metabase.util.memory :as u.mem]
    [metabase.warehouse-schema.schema :as warehouse-schema.schema]
    [metabase.warehouses.models.database :as database]
+   [toucan2.core :as t2]
    [toucan2.realize :as t2.realize])
   (:import
    (java.time.temporal Temporal)))
@@ -811,16 +812,18 @@
   "Apply to the Field with `field-id` the `changes` to columns no user set, returning the number updated."
   [field-id :- ::lib.schema.id/field
    changes  :- ::warehouse-schema.schema/field.update]
-  (let [changes (apply dissoc changes (sync.db/field-user-set-columns field-id))]
-    (if (seq changes)
-      (sync.db/update-field! field-id changes)
-      0)))
+  (t2/with-transaction [_]
+    (let [changes (apply dissoc changes (sync.db/field-user-set-columns field-id))]
+      (if (seq changes)
+        (sync.db/update-field! field-id changes)
+        0))))
 
 (mu/defn update-table-unless-user-set! :- ms/IntGreaterThanOrEqualToZero
   "Apply to the Table with `table-id` the `changes` to columns no user set, returning the number updated."
   [table-id :- ::lib.schema.id/table
    changes  :- ::warehouse-schema.schema/table.update]
-  (let [changes (apply dissoc changes (sync.db/table-user-set-columns table-id))]
-    (if (seq changes)
-      (sync.db/update-table! table-id changes)
-      0)))
+  (t2/with-transaction [_]
+    (let [changes (apply dissoc changes (sync.db/table-user-set-columns table-id))]
+      (if (seq changes)
+        (sync.db/update-table! table-id changes)
+        0))))

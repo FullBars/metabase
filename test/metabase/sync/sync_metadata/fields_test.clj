@@ -10,6 +10,7 @@
    [metabase.lib.metadata :as lib.metadata]
    [metabase.query-processor.test :as qp]
    [metabase.sync.core :as sync]
+   [metabase.sync.db :as sync.db]
    [metabase.sync.fetch-metadata :as fetch-metadata]
    [metabase.sync.sync-metadata :as sync-metadata]
    [metabase.sync.sync-metadata.fields :as sync-fields]
@@ -587,6 +588,19 @@
           (let [field-after-sync (t2/select-one :model/Field :id (u/the-id flocks-example-bird-name-field))]
             (is (= :type/FK (:semantic_type field-after-sync)))
             (is (= (u/the-id birds-example-name-field) (:fk_target_field_id field-after-sync)))))))))
+
+(deftest mark-fk-keeps-user-set-columns-test
+  (testing "sync marks a foreign key to a primary key whose semantic type a user set, and keeps the FK's own user values"
+    (mt/with-temp [:model/Database {db-id :id}    {}
+                   :model/Table    {pk-table :id} {:db_id db-id :name "pk_table" :schema "s"}
+                   :model/Table    {fk-table :id} {:db_id db-id :name "fk_table" :schema "s"}
+                   :model/Field    {pk-id :id}    {:table_id pk-table :name "id"}
+                   :model/Field    {fk-id :id :as fk-field} {:table_id fk-table :name "pk_id" :has_field_values :auto-list}]
+      (field-user-settings/upsert-field-user-settings! {:id pk-id} {:semantic_type :type/PK})
+      (field-user-settings/upsert-field-user-settings! fk-field {:has_field_values :auto-list})
+      (is (= 1 (sync.db/mark-fk! db-id "s" "fk_table" "pk_id" "s" "pk_table" "id")))
+      (is (=? {:fk_target_field_id pk-id :semantic_type :type/FK :has_field_values :auto-list}
+              (t2/select-one :model/Field :id fk-id))))))
 
 (deftest database-default-test
   (with-test-db

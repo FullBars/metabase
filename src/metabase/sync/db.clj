@@ -1,9 +1,6 @@
 (ns metabase.sync.db
-  "Application database queries for the sync module. Tables and Fields hold what users see; sync joins their user
-  settings to leave the values users set alone.
-
-  Every function here is a direct Toucan 2 call with no additional logic, so the rest of the module never talks to
-  `toucan2.core` itself."
+  "Application database queries for the sync module, which reads the user settings of Tables and Fields to leave the
+  values users set alone."
   (:require
    [clojure.set :as set]
    [metabase.app-db.core :as app-db]
@@ -188,8 +185,8 @@
   "The distinct `:schema` rows of the synced Tables of the Database with `database-id`."
   [database-id :- ::lib.schema.id/database]
   (t2/query {:select-distinct [:schema]
-             :from            [:metabase_table]
-             :where           [:and (sync-tables-clause :metabase_table) [:= :db_id database-id]]}))
+             :from            [[(t2/table-name :model/Table) :t]]
+             :where           [:and (sync-tables-clause :t) [:= :t.db_id database-id]]}))
 
 (mu/defn sync-tables-count
   "The number of synced Tables in the Database with `database-id`."
@@ -229,8 +226,10 @@
   (t2/insert-returning-instance! :model/Table table))
 
 (mu/defn table-user-set-columns :- [:set :keyword]
-  "The columns of the Table with `table-id` a user set."
+  "The columns of the Table with `table-id` a user set, locking its row until the transaction ends so that a user edit
+  cannot commit between this read and the caller's update."
   [table-id :- ::lib.schema.id/table]
+  (t2/query {:select [:id] :from [(t2/table-name :model/Table)] :where [:= :id table-id] :for :update})
   (warehouse-schema.user-settings/user-set-table-columns (t2/select-one :model/TableUserSettings :table_id table-id)))
 
 (mu/defn update-table!
@@ -266,13 +265,12 @@
 ;;; ------------------------------------------------- Field -------------------------------------------------
 
 (mu/defn fields
-  "The Fields with `field-ids` as sync wrote them. Feeds `our-metadata`, which is diffed against the warehouse."
+  "The Fields with `field-ids`, which `our-metadata` diffs against the warehouse."
   [field-ids :- [:sequential ::lib.schema.id/field]]
   (t2/select :model/Field :id [:in field-ids]))
 
 (mu/defn fields-for-field-values
-  "The columns needed to scan FieldValues of the Fields with `field-ids`, as users see them: the eligibility decision
-  (`visibility_type`/`has_field_values`) has to see what the user set."
+  "The columns needed to scan FieldValues of the Fields with `field-ids`."
   [field-ids :- [:sequential ::lib.schema.id/field]]
   (t2/select [:model/Field :name :id :base_type :effective_type :coercion_strategy :semantic_type :visibility_type
               :table_id :has_field_values]
@@ -343,7 +341,7 @@
   (t2/select-one-fn :fingerprint :model/Field :id field-id))
 
 (mu/defn active-fields-metadata-for-table
-  "The sync metadata columns of the active Fields of the Table with `table-id`, as sync wrote them, in field order."
+  "The sync metadata columns of the active Fields of the Table with `table-id`, in field order."
   [table-id :- ::lib.schema.id/table]
   (t2/select [:model/Field :name :database_type :base_type :effective_type :coercion_strategy :semantic_type
               :parent_id :id :description :database_position :nfc_path
@@ -437,7 +435,7 @@
   (t2/count :model/Field {:where (unscored-fields-clause database-id)}))
 
 (mu/defn fields-for-interestingness-scoring :- [:sequential (ms/InstanceOf :model/Field)]
-  "The Fields with `field-ids`, as users see them, for interestingness scoring."
+  "The Fields with `field-ids`, for interestingness scoring."
   [field-ids :- [:sequential {:min 1} ::lib.schema.id/field]]
   (t2/select :model/Field :id [:in field-ids]))
 
@@ -482,8 +480,10 @@
   (t2/insert-returning-pks! :model/Field rows))
 
 (mu/defn field-user-set-columns :- [:set :keyword]
-  "The columns of the Field with `field-id` a user set."
+  "The columns of the Field with `field-id` a user set, locking its row until the transaction ends so that a user edit
+  cannot commit between this read and the caller's update."
   [field-id :- ::lib.schema.id/field]
+  (t2/query {:select [:id] :from [(t2/table-name :model/Field)] :where [:= :id field-id] :for :update})
   (warehouse-schema.user-settings/user-set-field-columns (t2/select-one :model/FieldUserSettings :field_id field-id)))
 
 (mu/defn update-field!
@@ -550,18 +550,20 @@
 
 (defn- fk-field-id-subquery
   "Subquery selecting the (lowest) id of the Field named `column-name` on the Table `[table-schema table-name]` in
-  the Database with `db-id`, excluding Fields with a user-set foreign key target or semantic type. `min` limits the
-  subquery to one result (MySQL disallows `LIMIT` in subqueries), needed because schema/table/column names can be
-  non-unique when lower-cased for some DBs."
-  [db-id table-schema table-name column-name]
+  the Database with `db-id`, excluding, when `unless-user-set?`, Fields with a user-set foreign key target or semantic
+  type. `min` limits the subquery to one result (MySQL disallows `LIMIT` in subqueries), needed because
+  schema/table/column names can be non-unique when lower-cased for some DBs."
+  [db-id table-schema table-name column-name unless-user-set?]
   ^:allow-subquery
   {:select    [[[:min :f.id] :id]]
    :from      [[(t2/table-name :model/Field) :f]]
    :join      [[(t2/table-name :model/Table) :t] [:= :f.table_id :t.id]]
-   :left-join [[:metabase_field_user_settings :u] [:= :f.id :u.field_id]]
+   :left-join [[(t2/table-name :model/FieldUserSettings) :u] [:= :f.id :u.field_id]]
    :where     [:and
-               [:= [:coalesce :u.fk_target_field_id_set false] false]
-               [:= [:coalesce :u.semantic_type_set false] false]
+               (when unless-user-set?
+                 [:and
+                  [:= [:coalesce :u.fk_target_field_id_set false] false]
+                  [:= [:coalesce :u.semantic_type_set false] false]])
                [:= :t.db_id db-id]
                [:= [:lower :f.name] (u/lower-case-en column-name)]
                [:= [:lower :t.name] (u/lower-case-en table-name)]
@@ -582,13 +584,18 @@
    pk-table-schema  :- [:maybe :string]
    pk-table-name    :- :string
    pk-column-name   :- :string]
-  (let [fk-id (:id (t2/query-one (fk-field-id-subquery db-id fk-table-schema fk-table-name fk-column-name)))
-        pk-id (:id (t2/query-one (fk-field-id-subquery db-id pk-table-schema pk-table-name pk-column-name)))
-        field (when (and fk-id pk-id)
-                (t2/select-one [:model/Field :id :fk_target_field_id :has_field_values] :id fk-id))]
-    (if (and field (not= pk-id (:fk_target_field_id field)))
-      (t2/update! :model/Field :id fk-id (cond-> {:fk_target_field_id pk-id :semantic_type :type/FK}
-                                           (= :auto-list (:has_field_values field)) (assoc :has_field_values nil)))
+  (let [fk-id (:id (t2/query-one (fk-field-id-subquery db-id fk-table-schema fk-table-name fk-column-name true)))
+        pk-id (:id (t2/query-one (fk-field-id-subquery db-id pk-table-schema pk-table-name pk-column-name false)))]
+    (if (and fk-id pk-id)
+      (t2/with-transaction [_]
+        (let [user-set (field-user-set-columns fk-id)
+              field    (t2/select-one [:model/Field :id :fk_target_field_id :has_field_values] :id fk-id)]
+          (if (and (not (user-set :fk_target_field_id)) (not= pk-id (:fk_target_field_id field)))
+            (t2/update! :model/Field :id fk-id (apply dissoc
+                                                      (cond-> {:fk_target_field_id pk-id :semantic_type :type/FK}
+                                                        (= :auto-list (:has_field_values field)) (assoc :has_field_values nil))
+                                                      user-set))
+            0)))
       0)))
 
 (defn- data-sensitivity-to-scan-clause
@@ -598,6 +605,15 @@
   (if rescan-public?
     [:or [:= :data_sensitivity nil] [:= :data_sensitivity "PUBLIC"]]
     [:= :data_sensitivity nil]))
+
+(defn- user-set-data-sensitivity-clause
+  "Honey SQL clause matching Fields whose `data_sensitivity` a user set."
+  []
+  [:exists ^:allow-subquery {:select [1]
+                             :from   [[(t2/table-name :model/FieldUserSettings) :s]]
+                             :where  [:and
+                                      [:= :s.field_id :metabase_field.id]
+                                      [:not= :s.data_sensitivity nil]]}])
 
 (mu/defn fields-to-scan-for-data-sensitivity
   "The active, non-retired Fields of the Table with `table-id` the data-sensitivity classifier still has to scan,
@@ -610,11 +626,7 @@
                          [:= :active true]
                          [:not= :visibility_type "retired"]
                          (data-sensitivity-to-scan-clause rescan-public?)
-                         [:not [:exists ^:allow-subquery {:select [1]
-                                                          :from   [(t2/table-name :model/FieldUserSettings)]
-                                                          :where  [:and
-                                                                   [:= :field_id :metabase_field.id]
-                                                                   [:not= :data_sensitivity nil]]}]]]
+                         [:not (user-set-data-sensitivity-clause)]]
               :order-by [[:id :asc]]}))
 
 (mu/defn table-ids-with-fields-to-scan-for-data-sensitivity
@@ -639,36 +651,32 @@
   [table-ids :- [:set ::lib.schema.id/table]]
   (t2/reducible-select :model/Table :id [:in table-ids] {:order-by [[:schema :asc] [:name :asc]]}))
 
-(def ^:private classifier-data-sensitivity-clause
-  "Honey SQL clause matching Fields whose non-null `data_sensitivity` has no value in the `FieldUserSettings` mirror,
-  i.e. was written by the data-sensitivity classifier rather than a user."
+(defn- classifier-data-sensitivity-clause
+  "Honey SQL clause matching Fields whose non-null `data_sensitivity` the data-sensitivity classifier wrote."
+  []
   [:and
    [:not= :data_sensitivity nil]
-   [:not [:exists ^:allow-subquery {:select [1]
-                                    :from   [[:metabase_field_user_settings :s]]
-                                    :where  [:and
-                                             [:= :s.field_id :metabase_field.id]
-                                             [:not= :s.data_sensitivity nil]]}]]])
+   [:not (user-set-data-sensitivity-clause)]])
 
 (mu/defn reset-classifier-data-sensitivity-for-table!
   "Clear the classifier-written `data_sensitivity` (see [[classifier-data-sensitivity-clause]]) of the Fields of the
   Table with `table-id`. Returns the number of Fields cleared."
   [table-id :- ::lib.schema.id/table]
-  (t2/query-one {:update :metabase_field
+  (t2/query-one {:update (t2/table-name :model/Field)
                  :set    {:data_sensitivity nil}
-                 :where  [:and [:= :table_id table-id] classifier-data-sensitivity-clause]}))
+                 :where  [:and [:= :table_id table-id] (classifier-data-sensitivity-clause)]}))
 
 (mu/defn reset-classifier-data-sensitivity-for-database!
   "Clear the classifier-written `data_sensitivity` (see [[classifier-data-sensitivity-clause]]) of the Fields of every
   Table of the Database with `database-id`. Returns the number of Fields cleared."
   [database-id :- ::lib.schema.id/database]
-  (t2/query-one {:update :metabase_field
+  (t2/query-one {:update (t2/table-name :model/Field)
                  :set    {:data_sensitivity nil}
                  :where  [:and
                           [:in :table_id ^:allow-subquery {:select [:id]
-                                                           :from   [:metabase_table]
+                                                           :from   [(t2/table-name :model/Table)]
                                                            :where  [:= :db_id database-id]}]
-                          classifier-data-sensitivity-clause]}))
+                          (classifier-data-sensitivity-clause)]}))
 
 ;;; ---------------------------------------------- FieldValues ----------------------------------------------
 
