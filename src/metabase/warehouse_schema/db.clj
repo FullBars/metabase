@@ -124,10 +124,11 @@
               {:custom_position (into [:case] (mapcat (fn [[id position]] [[:= :id id] position])) field-id->position)}))
 
 (mu/defn clear-fk-targets-to-field!
-  "Clear the FK semantic type and target of every ::warehouse-schema.schema/field targeting the ::warehouse-schema.schema/field with `field-id`, returning the number
-  updated."
+  "Clear the target, and an FK semantic type, of every ::warehouse-schema.schema/field targeting the
+  ::warehouse-schema.schema/field with `field-id`, returning the number updated."
   [field-id :- ::lib.schema.id/field]
-  (t2/update! :model/Field {:fk_target_field_id field-id} {:semantic_type nil, :fk_target_field_id nil}))
+  (t2/update! :model/Field {:fk_target_field_id field-id :semantic_type :type/FK} {:semantic_type nil})
+  (t2/update! :model/Field {:fk_target_field_id field-id} {:fk_target_field_id nil}))
 
 (mu/defn delete-child-fields!
   "Delete the Fields nested under the ::warehouse-schema.schema/field with `parent-id`, returning the number deleted."
@@ -256,6 +257,7 @@
   (let [changes {:semantic_type nil, :semantic_type_set false, :fk_target_field_id nil, :fk_target_field_id_set false}]
     (+ (t2/update! :model/FieldUserSettings {:fk_target_field_id field-id} changes)
        (t2/update! :model/FieldUserSettings
+                   :semantic_type :type/FK
                    :field_id [:in ^:allow-subquery {:select [:id]
                                                     :from   [(t2/table-name :model/Field)]
                                                     :where  [:= :fk_target_field_id field-id]}]
