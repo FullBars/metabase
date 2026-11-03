@@ -145,7 +145,7 @@ const createDataDensity = (
 ): ComboChartDataDensity => ({
   type: "combo",
   seriesDataKeysWithLabels: [],
-  stackedDisplayWithLabels: [],
+  stackIdsWithLabels: [],
   numberOfDotsBySeriesKey,
   averageLabelWidth: 0,
   totalNumberOfLabels: 0,

@@ -207,10 +207,9 @@ function getShowLabelFn(
   );
 
   if (chartDataDensity.type === "combo") {
-    const { seriesDataKeysWithLabels, stackedDisplayWithLabels } =
-      chartDataDensity;
+    const { seriesDataKeysWithLabels, stackIdsWithLabels } = chartDataDensity;
     const numOfSeries =
-      seriesDataKeysWithLabels.length + stackedDisplayWithLabels.length;
+      seriesDataKeysWithLabels.length + stackIdsWithLabels.length;
 
     const avgLabelsPerSeries =
       numOfSeries > 0 ? totalNumberOfLabels / numOfSeries : totalNumberOfLabels;
@@ -260,14 +259,11 @@ function getSelectionFrequency(
     return { selectionFrequency, selectionOffset: 0 };
   }
 
-  const {
-    totalNumberOfLabels,
-    seriesDataKeysWithLabels,
-    stackedDisplayWithLabels,
-  } = chartDataDensity;
+  const { totalNumberOfLabels, seriesDataKeysWithLabels, stackIdsWithLabels } =
+    chartDataDensity;
 
   const numOfSeries =
-    seriesDataKeysWithLabels.length + stackedDisplayWithLabels.length;
+    seriesDataKeysWithLabels.length + stackIdsWithLabels.length;
 
   const avgLabelsPerSeries =
     numOfSeries > 0 ? totalNumberOfLabels / numOfSeries : totalNumberOfLabels;
@@ -347,14 +343,17 @@ export const computeContinuousScaleBarWidth = (
   return barWidth;
 };
 
+/**
+ * @param sideBySideBarCount bars drawn next to each other at one x value: one
+ * per stack on stacked charts, one per series otherwise.
+ */
 export const computeBarWidth = (
   xAxisModel: XAxisModel,
   boundaryWidth: number,
-  barSeriesCount: number,
-  isStacked: boolean,
+  sideBySideBarCount: number,
   xAxisScale?: XAxisScale,
 ) => {
-  const stackedOrSingleSeries = isStacked || barSeriesCount === 1;
+  const stackedOrSingleSeries = sideBySideBarCount === 1;
   const isNumericOrTimeSeries =
     isNumericAxis(xAxisModel) || isTimeSeriesAxis(xAxisModel);
 
@@ -362,7 +361,7 @@ export const computeBarWidth = (
     return computeContinuousScaleBarWidth(
       xAxisModel,
       boundaryWidth,
-      barSeriesCount,
+      sideBySideBarCount,
       stackedOrSingleSeries,
       xAxisScale,
     );
@@ -373,7 +372,7 @@ export const computeBarWidth = (
   if (isCategoryAxis(xAxisModel) && xAxisModel.isHistogram) {
     const barWidthPercent = stackedOrSingleSeries
       ? CHART_STYLE.series.histogramBarWidth
-      : CHART_STYLE.series.histogramBarWidth / barSeriesCount;
+      : CHART_STYLE.series.histogramBarWidth / sideBySideBarCount;
     barWidth = `${barWidthPercent * 100}%`;
   }
 
@@ -571,7 +570,7 @@ const buildEChartsBarSeries = (
   stackName: string | undefined,
   settings: ComputedVisualizationSettings,
   yAxisIndex: number,
-  barSeriesCount: number,
+  sideBySideBarCount: number,
   hasMultipleSeries: boolean,
   chartDataDensity: ChartDataDensity,
   chartWidth: number,
@@ -608,8 +607,7 @@ const buildEChartsBarSeries = (
     barWidth: computeBarWidth(
       xAxisModel,
       chartLayout.boundaryWidth,
-      barSeriesCount,
-      isStacked,
+      sideBySideBarCount,
       settings["graph.x_axis.scale"],
     ),
     encode: {
@@ -906,10 +904,9 @@ function getShowStackedLabelFn(
     chartWidth / (averageLabelWidth + MIN_LABEL_SPACING_PX),
   );
 
-  const { stackedDisplayWithLabels, seriesDataKeysWithLabels } =
-    chartDataDensity;
+  const { stackIdsWithLabels, seriesDataKeysWithLabels } = chartDataDensity;
   const numOfSeries =
-    seriesDataKeysWithLabels.length + stackedDisplayWithLabels.length;
+    seriesDataKeysWithLabels.length + stackIdsWithLabels.length;
   const avgLabelsPerSeries =
     numOfSeries > 0 ? totalNumberOfLabels / numOfSeries : totalNumberOfLabels;
 
@@ -933,22 +930,19 @@ function getStackedSelectionFrequency(
   maxLabelsPerSeries: number,
   stackName: string | undefined,
 ) {
-  const {
-    totalNumberOfLabels,
-    seriesDataKeysWithLabels,
-    stackedDisplayWithLabels,
-  } = chartDataDensity;
+  const { totalNumberOfLabels, seriesDataKeysWithLabels, stackIdsWithLabels } =
+    chartDataDensity;
 
   const numOfSeries =
-    seriesDataKeysWithLabels.length + stackedDisplayWithLabels.length;
+    seriesDataKeysWithLabels.length + stackIdsWithLabels.length;
 
   const avgLabelsPerSeries =
     numOfSeries > 0 ? totalNumberOfLabels / numOfSeries : totalNumberOfLabels;
 
   const selectionFrequency = Math.ceil(avgLabelsPerSeries / maxLabelsPerSeries);
 
-  const stackedIndex = stackedDisplayWithLabels.findIndex(
-    (stackDisplay) => stackDisplay === stackName,
+  const stackedIndex = stackIdsWithLabels.findIndex(
+    (stackId) => stackId === stackName,
   );
 
   const totalIndex = stackedIndex + seriesDataKeysWithLabels.length;
@@ -979,10 +973,7 @@ export const getStackTotalsSeries = (
     const stackColumn = chartModel.columnByDataKey[stackDataKeys[0]];
 
     const labelFormatter = firstSeriesInStack.stack
-      ? chartModel.stackedLabelsFormatters?.[
-          // Unjustified type cast. FIXME
-          firstSeriesInStack.stack as "bar" | "area"
-        ]
+      ? chartModel.stackedLabelsFormatters?.[firstSeriesInStack.stack]
       : undefined;
 
     if (!labelFormatter) {
@@ -1032,6 +1023,55 @@ export const getStackTotalsSeries = (
   });
 };
 
+/**
+ * ECharts puts bar stacks side by side in the order it first meets them in
+ * `series`. Stacked charts list series in reverse legend order, so that the
+ * first legend item is on top of its stack, which would also put the first
+ * stack group on the right. Reorders bar series so their stacks go left to
+ * right in legend order, keeping the order inside each stack.
+ */
+const orderBarStacksByLegend = (
+  seriesModels: SeriesModel[],
+  stackModels: StackModel[],
+  isLegendReversed: boolean,
+): SeriesModel[] => {
+  const barStackModels = stackModels.filter(
+    (stackModel) => stackModel.display === "bar",
+  );
+  if (barStackModels.length < 2) {
+    return seriesModels;
+  }
+
+  const stackIdByDataKey = new Map(
+    barStackModels.flatMap((stackModel) =>
+      stackModel.seriesKeys.map((dataKey) => [dataKey, stackModel.id]),
+    ),
+  );
+  const legendOrder = isLegendReversed
+    ? seriesModels.toReversed()
+    : seriesModels;
+  const stackRank = new Map<string, number>();
+  for (const seriesModel of legendOrder) {
+    const stackId = stackIdByDataKey.get(seriesModel.dataKey);
+    if (stackId != null && !stackRank.has(stackId)) {
+      stackRank.set(stackId, stackRank.size);
+    }
+  }
+
+  const getRank = (seriesModel: SeriesModel) =>
+    stackRank.get(stackIdByDataKey.get(seriesModel.dataKey) ?? "") ?? 0;
+  const orderedBarSeriesModels = seriesModels
+    .filter((seriesModel) => stackIdByDataKey.has(seriesModel.dataKey))
+    .sort((left, right) => getRank(left) - getRank(right));
+
+  let barIndex = 0;
+  return seriesModels.map((seriesModel) =>
+    stackIdByDataKey.has(seriesModel.dataKey)
+      ? orderedBarSeriesModels[barIndex++]
+      : seriesModel,
+  );
+};
+
 export const buildEChartsSeries = (
   chartModel: CartesianChartModel,
   settings: ComputedVisualizationSettings,
@@ -1062,19 +1102,32 @@ export const buildEChartsSeries = (
   const hasAnyBarSeries = Object.values(seriesSettingsByDataKey).some(
     (seriesSettings) => seriesSettings.display === "bar",
   );
-  const barSeriesCount = isSplitPanels
+  const barSeriesCount = Object.values(seriesSettingsByDataKey).filter(
+    (seriesSettings) => seriesSettings.display === "bar",
+  ).length;
+  const barStackCount = chartModel.stackModels.filter(
+    (stackModel) => stackModel.display === "bar",
+  ).length;
+  const sideBySideBarCount = isSplitPanels
     ? 1
-    : Object.values(seriesSettingsByDataKey).filter(
-        (seriesSettings) => seriesSettings.display === "bar",
-      ).length;
+    : barStackCount > 0
+      ? barStackCount
+      : barSeriesCount;
 
   const hasMultipleSeries = chartModel.seriesModels.length > 1;
 
   const visibleSeries = chartModel.seriesModels.filter(
     (seriesModel) => seriesModel.visible,
   );
+  const orderedVisibleSeries = isSplitPanels
+    ? visibleSeries
+    : orderBarStacksByLegend(
+        visibleSeries,
+        chartModel.stackModels,
+        Boolean(settings["legend.is_reversed"]),
+      );
 
-  const series = visibleSeries
+  const series = orderedVisibleSeries
     .map((seriesModel, visibleIndex) => {
       const seriesSettings = seriesSettingsByDataKey[seriesModel.dataKey];
       const panelIndex = isSplitPanels ? visibleIndex : undefined;
@@ -1087,7 +1140,7 @@ export const buildEChartsSeries = (
           ? undefined
           : chartModel.stackModels.find((stackModel) =>
               stackModel.seriesKeys.includes(seriesModel.dataKey),
-            )?.display;
+            )?.id;
 
       switch (seriesSettings.display) {
         case "line":
@@ -1123,7 +1176,7 @@ export const buildEChartsSeries = (
             stackName,
             settings,
             yAxisIndex,
-            barSeriesCount,
+            sideBySideBarCount,
             hasMultipleSeries,
             chartModel.dataDensity,
             chartWidth,

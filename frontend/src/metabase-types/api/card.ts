@@ -159,6 +159,8 @@ export type SeriesSettings = {
   "line.marker_enabled"?: boolean;
   "line.missing"?: string;
   show_series_trendline?: boolean;
+  /** Stacked charts stack series of the same display only when this matches */
+  stack_group?: string;
 };
 
 export type SeriesOrderSetting = {

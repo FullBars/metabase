@@ -106,7 +106,11 @@ export type TimeSeriesAxisFormatter = (
   unit?: DateTimeAbsoluteUnit,
 ) => string;
 export type SeriesFormatters = Record<DataKey, LabelFormatter | undefined>;
-export type StackedSeriesFormatters = { [T in StackDisplay]?: LabelFormatter };
+/** Stack total label formatters by stack id */
+export type StackedSeriesFormatters = Record<
+  string,
+  LabelFormatter | undefined
+>;
 
 export type DateRange = [Dayjs, Dayjs];
 
@@ -200,6 +204,8 @@ export type YAxisSeriesNames = Record<YAxisSide, string[] | null>;
 
 export type StackDisplay = "bar" | "area";
 export type StackModel = {
+  /** Unique per stack: the display, plus the series' `stack_group` when set */
+  id: string;
   axis: YAxisSide;
   display: StackDisplay;
   seriesKeys: DataKey[];
@@ -222,7 +228,7 @@ export type WaterFallChartDataDensity = BaseChartDataDensity & {
 export type ComboChartDataDensity = BaseChartDataDensity & {
   type: "combo";
   seriesDataKeysWithLabels: DataKey[];
-  stackedDisplayWithLabels: StackDisplay[];
+  stackIdsWithLabels: string[];
   numberOfDotsBySeriesKey: Record<DataKey, number>;
 };
 

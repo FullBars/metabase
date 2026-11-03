@@ -15,6 +15,7 @@ import {
 import type {
   AxisFormatter,
   ChartDataset,
+  DataKey,
   NumericAxisScaleTransforms,
   SeriesFormatters,
   SeriesModel,
@@ -782,13 +783,13 @@ const areHorizontalXAxisTicksOverlapping = (
 
 const countFittingLabels = (
   input: ChartLayoutInput,
-  barStack: StackModel,
+  barSeriesKeys: DataKey[],
   barWidth: number,
   renderingContext: RenderingContext,
 ) => {
   const { seriesLabelsFormatters } = input;
   const dataset = getDataset(input);
-  return barStack.seriesKeys.reduce(
+  return barSeriesKeys.reduce(
     (fitCounts, seriesKey) => {
       const formatter = seriesLabelsFormatters?.[seriesKey];
       if (!formatter) {
@@ -841,18 +842,19 @@ const getStackedBarTicksRotation = (
   renderingContext: RenderingContext,
 ) => {
   const { stackModels } = input;
-  const barStack = stackModels?.find(
-    (stackModel) => stackModel.display === "bar",
-  );
+  const barStacks =
+    stackModels?.filter((stackModel) => stackModel.display === "bar") ?? [];
 
-  if (!barStack) {
+  if (barStacks.length === 0) {
     return;
   }
 
+  // Stacks with different stack groups are drawn side by side
   const barWidth =
-    getDimensionWidth(input, boundaryWidth) *
-    CHART_STYLE.series.barWidth *
-    BAR_WIDTH_PRECISION;
+    (getDimensionWidth(input, boundaryWidth) *
+      CHART_STYLE.series.barWidth *
+      BAR_WIDTH_PRECISION) /
+    barStacks.length;
 
   if (barWidth < CHART_STYLE.seriesLabels.size) {
     return;
@@ -860,7 +862,7 @@ const getStackedBarTicksRotation = (
 
   const labelsFit = countFittingLabels(
     input,
-    barStack,
+    barStacks.flatMap((barStack) => barStack.seriesKeys),
     barWidth,
     renderingContext,
   );

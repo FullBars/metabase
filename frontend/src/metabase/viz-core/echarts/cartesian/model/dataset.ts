@@ -859,16 +859,17 @@ export const applyVisualizationSettingsDataTransformations = (
       stackModels.flatMap((stackModel) => stackModel.seriesKeys),
     ),
     getBarSeriesDataLabelTransform(barSeriesModels),
-    {
-      condition:
-        settings["stackable.stack_type"] != null &&
-        hasInterpolatedAreaSeries(seriesModels, settings),
-      fn: getStackedAreasInterpolateTransform(
-        seriesModels,
-        stackModels.find((stackModel) => stackModel.display === "area")
-          ?.seriesKeys ?? [],
-      ),
-    },
+    ...stackModels
+      .filter((stackModel) => stackModel.display === "area")
+      .map((areaStack) => ({
+        condition:
+          settings["stackable.stack_type"] != null &&
+          hasInterpolatedAreaSeries(seriesModels, settings),
+        fn: getStackedAreasInterpolateTransform(
+          seriesModels,
+          areaStack.seriesKeys,
+        ),
+      })),
     getBarSeriesZeroToNullTransform(barSeriesModels),
   ]);
 };

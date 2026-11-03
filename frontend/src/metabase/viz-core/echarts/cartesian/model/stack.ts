@@ -1,11 +1,16 @@
-import _ from "underscore";
-
-import { getObjectKeys } from "metabase/utils/objects";
-
 import type { ComputedVisualizationSettings } from "../../../types";
 
-import type { SeriesModel, StackModel } from "./types";
+import type { SeriesModel, StackDisplay, StackModel } from "./types";
 
+const isStackDisplay = (display: string | undefined): display is StackDisplay =>
+  display === "bar" || display === "area";
+
+/**
+ * Series stack together when they have the same display and `stack_group`.
+ * Series without a `stack_group` share one stack per display, whose id is the
+ * display itself, as before groups existed. Stacks are ordered by where their
+ * first series appears.
+ */
 export const getStackModels = (
   seriesModels: SeriesModel[],
   settings: ComputedVisualizationSettings,
@@ -14,26 +19,37 @@ export const getStackModels = (
     return [];
   }
 
-  const visibleSeriesModels = seriesModels.filter(
-    (seriesModel) => seriesModel.visible,
-  );
+  const stackSeriesModelsById = new Map<
+    string,
+    { display: StackDisplay; seriesModels: SeriesModel[] }
+  >();
 
-  const seriesModelsByDisplay = _.groupBy(
-    visibleSeriesModels,
-    (seriesModel) => {
-      const series = settings.series?.(
-        seriesModel.legacySeriesSettingsObjectKey,
-      );
+  for (const seriesModel of seriesModels) {
+    if (!seriesModel.visible) {
+      continue;
+    }
 
-      return series?.display ?? "no-display";
-    },
-  );
+    const seriesSettings = settings.series?.(
+      seriesModel.legacySeriesSettingsObjectKey,
+    );
+    const display = seriesSettings?.display;
+    if (!isStackDisplay(display)) {
+      continue;
+    }
 
-  return getObjectKeys(seriesModelsByDisplay)
-    .filter((display) => display === "bar" || display === "area")
-    .map((display) => {
-      const stackSeriesModels = seriesModelsByDisplay[display];
+    const stackGroup = seriesSettings?.stack_group;
+    const id = stackGroup ? `${display}_${stackGroup}` : display;
+    const stack = stackSeriesModelsById.get(id) ?? {
+      display,
+      seriesModels: [],
+    };
+    stack.seriesModels.push(seriesModel);
+    stackSeriesModelsById.set(id, stack);
+  }
 
+  return Array.from(
+    stackSeriesModelsById,
+    ([id, { display, seriesModels: stackSeriesModels }]) => {
       let axis: "left" | "right";
       if (settings["stackable.stack_type"] === "normalized") {
         axis = "left";
@@ -48,11 +64,11 @@ export const getStackModels = (
       }
 
       return {
+        id,
         axis,
         display,
-        seriesKeys: seriesModelsByDisplay[display].map(
-          (seriesModel) => seriesModel.dataKey,
-        ),
+        seriesKeys: stackSeriesModels.map((seriesModel) => seriesModel.dataKey),
       };
-    });
+    },
+  );
 };

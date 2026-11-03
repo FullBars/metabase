@@ -117,6 +117,9 @@ export function seriesSetting({
         ]);
       },
     },
+    // Set through the API, no widget. Without a definition the stored value
+    // wouldn't reach the computed series settings.
+    stack_group: {},
     "line.interpolate": {
       get title() {
         return t`Line shape`;

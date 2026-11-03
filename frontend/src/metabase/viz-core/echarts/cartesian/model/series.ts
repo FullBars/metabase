@@ -44,7 +44,6 @@ import type {
   RawValueFormatter,
   SeriesFormatters,
   SeriesModel,
-  StackDisplay,
   StackModel,
   StackTotalDataKey,
   StackedSeriesFormatters,
@@ -358,6 +357,12 @@ export function getStackTotalValue(
   stackDataKeys: DataKey[],
   signKey: StackTotalDataKey,
 ): number | null {
+  // `signKey` is set when any stack has a value here, so a stack without
+  // values of its own gets no total
+  if (!stackDataKeys.some((key) => typeof data[key] === "number")) {
+    return null;
+  }
+
   let stackValue: number | null = data[signKey] != null ? 0 : null;
   stackDataKeys.forEach((stackDataKey) => {
     const seriesValue = data[stackDataKey];
@@ -536,7 +541,7 @@ export function getComboChartDataDensity(
       // stacked labels count + stacked label width sum
       if (settings["stackable.stack_type"] !== "normalized") {
         stackModels.forEach((stackModel) => {
-          const formatter = stackedLabelsFormatters[stackModel.display];
+          const formatter = stackedLabelsFormatters[stackModel.id];
 
           const positiveStackTotal = getStackTotalValue(
             datum,
@@ -582,20 +587,18 @@ export function getComboChartDataDensity(
     totalNumberOfLabels > 0 ? sumOfLabelWidths / totalNumberOfLabels : 0;
 
   const seriesDataKeysWithLabels: DataKey[] = [];
-  const stackedDisplayWithLabels: StackDisplay[] = [];
+  const stackIdsWithLabels: string[] = [];
   seriesDataKeysWithLabels.push(
     ...seriesWithLabels.map((series) => series.dataKey),
   );
   if (settings["stackable.stack_type"] !== "normalized") {
-    stackedDisplayWithLabels.push(
-      ...stackModels.map((stackModel) => stackModel.display),
-    );
+    stackIdsWithLabels.push(...stackModels.map((stackModel) => stackModel.id));
   }
 
   return {
     type,
     seriesDataKeysWithLabels,
-    stackedDisplayWithLabels,
+    stackIdsWithLabels,
     numberOfDotsBySeriesKey,
     averageLabelWidth,
     totalNumberOfLabels,
@@ -651,7 +654,7 @@ const getStackTotalsFormatters = (
     return [];
   }
 
-  return stackModels.map(({ display: stackName, seriesKeys }) => {
+  return stackModels.map(({ id: stackName, seriesKeys }) => {
     const seriesModel = seriesModels.find((s) => s.dataKey === seriesKeys[0]);
     if (!seriesModel) {
       throw new Error(`Missing series model for data key: ${seriesKeys[0]}`);
@@ -806,8 +809,9 @@ const getSeriesLabelsFormatters = (
   }
 
   const barStackSeriesKeys = new Set(
-    stackModels.find((stackModel) => stackModel.display === "bar")
-      ?.seriesKeys ?? [],
+    stackModels
+      .filter((stackModel) => stackModel.display === "bar")
+      .flatMap((stackModel) => stackModel.seriesKeys),
   );
   const barStackSeries = seriesModelsWithLabels.filter((seriesModel) =>
     barStackSeriesKeys.has(seriesModel.dataKey),
