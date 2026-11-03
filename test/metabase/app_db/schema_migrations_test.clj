@@ -3559,9 +3559,8 @@
                  (into {} (map (juxt identity user-visibility)) [hidden technical cruft visible unpublished]))))))))
 
 (deftest move-user-settings-into-metabase-table-and-field-test
-  (testing "ceygl0, ziqcir, q7m2xv, h4ptnw: user-set values move into metabase_table and metabase_field, and the
-           settings columns that carry nothing any more are dropped"
-    (impl/test-migrations ["ceygl0" "h4ptnw"] [migrate!]
+  (testing "ceygl0, ziqcir: user-set values move into metabase_table and metabase_field"
+    (impl/test-migrations ["ceygl0" "ziqcir"] [migrate!]
       (let [db-id         (t2/insert-returning-pk! :metabase_database {:name       "Move User Settings Test DB"
                                                                        :engine     "h2"
                                                                        :created_at :%now
@@ -3633,11 +3632,76 @@
                   (t2/select-one :metabase_field :id edited-field))))
         (testing "a Field without settings is untouched"
           (is (=? {:display_name "Synced Field" :description "synced comment"}
-                  (t2/select-one :metabase_field :id plain-field))))
-        (testing "the settings columns that no longer carry information are gone"
-          (is (not-any? #{:caveats_set :points_of_interest_set}
-                        (keys (t2/select-one :metabase_table_user_settings :table_id edited))))
-          (is (not (contains? (t2/select-one :metabase_field_user_settings :field_id edited-field) :nfc_path))))))))
+                  (t2/select-one :metabase_field :id plain-field))))))))
+
+(defn- app-db-boolean
+  "`x` read from a boolean column of the app DB, which MySQL returns as a number or a byte array."
+  [x]
+  (cond (number? x)                             (= 1 x)
+        (instance? (Class/forName "[B") x)      (= 1 (first ^bytes x))
+        :else                                   x))
+
+(deftest move-user-settings-follows-flags-and-pairs-test
+  (testing "ceygl0, ziqcir: a false flag keeps the synced value, a true flag copies NULL, and a column that follows
+           another moves with it"
+    (impl/test-migrations ["ceygl0" "ziqcir"] [migrate!]
+      (let [db-id     (t2/insert-returning-pk! :metabase_database {:name "Flags Test DB" :engine "h2" :created_at :%now
+                                                                   :updated_at :%now :details "{}"})
+            coll-id   (t2/insert-returning-pk! :collection {:name "c" :slug "c" :created_at :%now
+                                                            :entity_id "flagsflagsflagsflags1"})
+            table-id  (t2/insert-returning-pk! :metabase_table {:active true :db_id db-id :name "t" :display_name "Synced"
+                                                                :description "synced" :visibility_type "cruft"
+                                                                :data_layer "hidden" :data_source "ingested"
+                                                                :field_order "database" :caveats "synced caveats"
+                                                                :show_in_getting_started true :is_published true
+                                                                :collection_id coll-id :created_at :%now
+                                                                :updated_at :%now})
+            field!    (fn [field-name extra]
+                        (t2/insert-returning-pk! :metabase_field
+                                                 (merge {:table_id table-id :name field-name :display_name "Synced"
+                                                         :description "synced" :semantic_type "type/Category"
+                                                         :active true :base_type "type/Text" :database_type "TEXT"
+                                                         :json_unfolding true :has_field_values "auto-list"
+                                                         :coercion_strategy "Coercion/Synced" :created_at :%now
+                                                         :updated_at :%now}
+                                                        extra)))
+            target-id (field! "target" {})
+            flagged   (field! "flagged" {:fk_target_field_id target-id})
+            coerced   (field! "coerced" {})]
+        (t2/insert! :metabase_table_user_settings {:table_id               table-id
+                                                   :description            "stale" :description_set false
+                                                   :visibility_type        "hidden" :visibility_type_set false
+                                                   :data_layer             nil :data_layer_set true
+                                                   :data_source            "upload" :data_source_set true
+                                                   :caveats                "stale" :caveats_set false
+                                                   :show_in_getting_started false
+                                                   :is_published           false :collection_id nil})
+        (t2/insert! :metabase_field_user_settings {:field_id               flagged
+                                                   :semantic_type          nil :semantic_type_set true
+                                                   :fk_target_field_id     nil :fk_target_field_id_set true
+                                                   :description            "stale" :description_set false
+                                                   :has_field_values       "list"
+                                                   :json_unfolding         false
+                                                   :settings               "{\"currency\":\"EUR\"}"
+                                                   :coercion_strategy      "Coercion/Orphan"})
+        (t2/insert! :metabase_field_user_settings {:field_id coerced :effective_type "type/Integer" :coercion_strategy nil})
+        (migrate!)
+        (let [table (t2/select-one :metabase_table :id table-id)]
+          (testing "a Table"
+            (is (=? {:description "synced" :visibility_type "cruft" :data_layer nil :data_source "upload"
+                     :caveats "synced caveats" :collection_id nil}
+                    table))
+            (is (false? (app-db-boolean (:show_in_getting_started table))))
+            (is (false? (app-db-boolean (:is_published table))) "collection_id follows is_published")))
+        (let [field (t2/select-one :metabase_field :id flagged)]
+          (testing "a Field"
+            (is (=? {:semantic_type nil :fk_target_field_id nil :description "synced" :has_field_values "list"
+                     :settings "{\"currency\":\"EUR\"}" :coercion_strategy "Coercion/Synced"}
+                    field))
+            (is (false? (app-db-boolean (:json_unfolding field))))))
+        (testing "a NULL coercion_strategy moves with the effective_type it follows"
+          (is (=? {:effective_type "type/Integer" :coercion_strategy nil}
+                  (t2/select-one :metabase_field :id coerced))))))))
 
 (deftest glossary-entity-id-backfill-test
   (testing "v64.2026-09-11: glossary.entity_id is added, backfilled for existing rows, NOT NULL and unique"

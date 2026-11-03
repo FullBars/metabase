@@ -1,8 +1,8 @@
 ## metabase_table and metabase_field hold what users see again, with metabase_table_user_settings and
 ## metabase_field_user_settings recording which of those values users set. Since v64 user edits went only to the
 ## settings tables and were applied on read; these changesets copy every user-set value into its Table or Field
-## row, then drop the settings columns that no longer carry information: caveats_set and points_of_interest_set
-## (only users write those columns, so a NULL is always the user's) and nfc_path (sync owns it).
+## row. The settings columns that no longer carry information (caveats_set, points_of_interest_set and nfc_path) stay
+## for releases that still read them, unused.
 
 databaseChangeLog:
   - changeSet:
@@ -142,51 +142,3 @@ databaseChangeLog:
                   data_sensitivity = CASE WHEN s.data_sensitivity IS NOT NULL THEN s.data_sensitivity ELSE t.data_sensitivity END,
                   custom_position = CASE WHEN s.custom_position IS NOT NULL THEN s.custom_position ELSE t.custom_position END
       rollback: # not necessary; the user values stay in metabase_field_user_settings
-
-  - changeSet:
-      id: q7m2xv
-      author: ranquild
-      comment: Drop caveats_set and points_of_interest_set from metabase_table_user_settings
-      changes:
-        - dropColumn:
-            tableName: metabase_table_user_settings
-            columns:
-              - column:
-                  name: caveats_set
-              - column:
-                  name: points_of_interest_set
-      rollback:
-        - addColumn:
-            tableName: metabase_table_user_settings
-            columns:
-              - column:
-                  remarks: Whether the user set caveats, so a NULL caveats overrides the sync value
-                  name: caveats_set
-                  type: ${boolean.type}
-                  defaultValueBoolean: false
-                  constraints:
-                    nullable: false
-              - column:
-                  remarks: Whether the user set points_of_interest, so a NULL points_of_interest overrides the sync value
-                  name: points_of_interest_set
-                  type: ${boolean.type}
-                  defaultValueBoolean: false
-                  constraints:
-                    nullable: false
-
-  - changeSet:
-      id: h4ptnw
-      author: ranquild
-      comment: Drop nfc_path from metabase_field_user_settings, since sync owns it
-      changes:
-        - dropColumn:
-            tableName: metabase_field_user_settings
-            columnName: nfc_path
-      rollback:
-        - addColumn:
-            tableName: metabase_field_user_settings
-            columns:
-              - column:
-                  remarks: User-set nfc_path for the Field
-                  name: nfc_path
-                  type: varchar(254)

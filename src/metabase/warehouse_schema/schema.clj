@@ -113,6 +113,7 @@
    [:settings           {:optional true} [:maybe ::field-user-settings.settings]]
    [:data_sensitivity   {:optional true} [:maybe [:or :keyword :string]]]
    [:custom_position    {:optional true} [:maybe :int]]
+   [:nfc_path           {:optional true} [:maybe :string]]
    [:description_set        {:optional true} :boolean]
    [:semantic_type_set      {:optional true} :boolean]
    [:fk_target_field_id_set {:optional true} :boolean]])
@@ -167,6 +168,8 @@
    [:collection_id           {:optional true} [:maybe ::lib.schema.id/collection]]
    [:description_set         {:optional true} :boolean]
    [:visibility_type_set     {:optional true} :boolean]
+   [:caveats_set             {:optional true} :boolean]
+   [:points_of_interest_set  {:optional true} :boolean]
    [:data_layer_set          {:optional true} :boolean]
    [:data_source_set         {:optional true} :boolean]])
 
