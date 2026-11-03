@@ -126,7 +126,8 @@
 
 (mu/defn- write-user-values!
   "Write into the Table with `table-id` the values its settings say a user set, and the system values of the columns
-  in `previously-set` no user sets any more."
+  in `previously-set` no user sets any more, changing its `updated_at` even when no value changes so that sync skips
+  its pending update."
   [table-id       :- ::lib.schema.id/table
    previously-set :- [:set (into [:enum] user-settings/user-settable-table-columns)]]
   (let [table    (warehouse-schema.db/table table-id)
@@ -140,8 +141,7 @@
                         (select-keys settings user-set))
         same?    (fn [x y] (= (cond-> x (keyword? x) u/qualified-name) (cond-> y (keyword? y) u/qualified-name)))
         changes  (into {} (remove (fn [[column value]] (same? value (get table column)))) values)]
-    (when (seq changes)
-      (warehouse-schema.db/update-table! table-id (without-derived-half changes)))))
+    (warehouse-schema.db/update-table! table-id (assoc (without-derived-half changes) :updated_at (mi/current-timestamp)))))
 
 (mu/defn upsert-table-user-settings!
   "Record the user-settable Table columns present in `settings` as the user values of `table`, in its settings and its
@@ -174,15 +174,15 @@
         (if (some #{:display_name :field_order} (keys settings))
           (doseq [table-id table-ids]
             (write-user-values! table-id (set (keys settings))))
-          (when-let [changes (not-empty
-                              (into {}
-                                    (keep (fn [[column value]]
-                                            (let [value (if (and (nil? value) (not (user-settings/table-set-flags column)))
-                                                          (system-value nil column)
-                                                          value)]
-                                              (when-not (= value ::keep) [column value]))))
-                                    settings))]
-            (warehouse-schema.db/update-tables! table-ids changes)))))))
+          (warehouse-schema.db/update-tables!
+           table-ids
+           (into {:updated_at (mi/current-timestamp)}
+                 (keep (fn [[column value]]
+                         (let [value (if (and (nil? value) (not (user-settings/table-set-flags column)))
+                                       (system-value nil column)
+                                       value)]
+                           (when-not (= value ::keep) [column value]))))
+                 settings)))))))
 
 (defn- valid-field-order?
   "Field ordering is valid if all the fields from a given table are present and only from that table."

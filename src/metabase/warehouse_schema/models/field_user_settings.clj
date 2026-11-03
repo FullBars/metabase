@@ -81,7 +81,8 @@
 
 (mu/defn- write-user-values!
   "Write into the Field with `field-id` the values its settings say a user set, and the system values of the columns
-  in `previously-set` no user sets any more."
+  in `previously-set` no user sets any more, changing its `updated_at` even when no value changes so that sync skips
+  its pending update."
   [field-id       :- ::lib.schema.id/field
    previously-set :- [:set (into [:enum] user-settings/user-settable-field-columns)]]
   (let [field    (warehouse-schema.db/field field-id)
@@ -94,8 +95,7 @@
                               (remove user-set previously-set))
                         (select-keys settings user-set))
         changes  (into {} (remove (fn [[column value]] (= value (get field column)))) values)]
-    (when (seq changes)
-      (warehouse-schema.db/update-field! field-id changes))))
+    (warehouse-schema.db/update-field! field-id (assoc changes :updated_at (mi/current-timestamp)))))
 
 (mu/defn upsert-field-user-settings!
   "Record the user-settable Field columns present in `settings` as the user values of `field`, in its settings and its

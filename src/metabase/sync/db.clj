@@ -225,34 +225,23 @@
   [table :- ::warehouse-schema.schema/table.update]
   (t2/insert-returning-instance! :model/Table table))
 
-(defn- unchanged-settings-condition
-  "Toucan condition on the `id` of a row matching it only while its `settings-model` row, keyed by `fk-column`, still has
-  the `updated_at` of `settings`, or is still missing when `settings` is nil."
-  [settings-model fk-column id settings]
-  (let [settings-row ^:allow-subquery {:select [fk-column]
-                                       :from   [(t2/table-name settings-model)]
-                                       :where  [:and
-                                                [:= fk-column id]
-                                                (when settings
-                                                  [:= :updated_at (:updated_at settings)])]}]
-    (if settings
-      [:in settings-row]
-      [:not-in settings-row])))
-
 (mu/defn table-user-settings :- [:maybe ::warehouse-schema.schema/table-user-settings]
   "The TableUserSettings of the Table with `table-id`, or nil."
   [table-id :- ::lib.schema.id/table]
   (t2/select-one :model/TableUserSettings :table_id table-id))
 
-(mu/defn update-table-unless-settings-changed! :- ms/IntGreaterThanOrEqualToZero
-  "Apply `changes` to the Table with `table-id` unless its TableUserSettings are no longer `settings`, returning the
-  number updated."
-  [table-id :- ::lib.schema.id/table
-   settings :- [:maybe ::warehouse-schema.schema/table-user-settings]
-   changes  :- ::warehouse-schema.schema/table.update]
-  (t2/update! :model/Table table-id
-              :id (unchanged-settings-condition :model/TableUserSettings :table_id table-id settings)
-              changes))
+(mu/defn table-updated-at :- [:maybe ms/TemporalInstant]
+  "The `updated_at` of the Table with `table-id`, which every user edit of it changes."
+  [table-id :- ::lib.schema.id/table]
+  (t2/select-one-fn :updated_at :model/Table :id table-id))
+
+(mu/defn update-table-unless-updated-since! :- ms/IntGreaterThanOrEqualToZero
+  "Apply `changes` to the Table with `table-id` unless its `updated_at` is no longer `updated-at`, returning the number
+  updated."
+  [table-id   :- ::lib.schema.id/table
+   updated-at :- ms/TemporalInstant
+   changes    :- ::warehouse-schema.schema/table.update]
+  (count (t2/update-returning-pks! :model/Table :id table-id :updated_at updated-at changes)))
 
 (mu/defn update-table!
   "Apply `changes` to the Table with `table-id`, returning the number updated."
@@ -506,15 +495,18 @@
   [field-id :- ::lib.schema.id/field]
   (t2/select-one :model/FieldUserSettings :field_id field-id))
 
-(mu/defn update-field-unless-settings-changed! :- ms/IntGreaterThanOrEqualToZero
-  "Apply `changes` to the Field with `field-id` unless its FieldUserSettings are no longer `settings`, returning the
-  number updated."
-  [field-id :- ::lib.schema.id/field
-   settings :- [:maybe ::warehouse-schema.schema/field-user-settings]
-   changes  :- ::warehouse-schema.schema/field.update]
-  (t2/update! :model/Field field-id
-              :id (unchanged-settings-condition :model/FieldUserSettings :field_id field-id settings)
-              changes))
+(mu/defn field-updated-at :- [:maybe ms/TemporalInstant]
+  "The `updated_at` of the Field with `field-id`, which every user edit of it changes."
+  [field-id :- ::lib.schema.id/field]
+  (t2/select-one-fn :updated_at :model/Field :id field-id))
+
+(mu/defn update-field-unless-updated-since! :- ms/IntGreaterThanOrEqualToZero
+  "Apply `changes` to the Field with `field-id` unless its `updated_at` is no longer `updated-at`, returning the number
+  updated."
+  [field-id   :- ::lib.schema.id/field
+   updated-at :- ms/TemporalInstant
+   changes    :- ::warehouse-schema.schema/field.update]
+  (count (t2/update-returning-pks! :model/Field :id field-id :updated_at updated-at changes)))
 
 (mu/defn update-field!
   "Apply `changes` to the Field with `field-id`, returning the number updated."
@@ -617,15 +609,14 @@
   (let [fk-id (:id (t2/query-one (fk-field-id-subquery db-id fk-table-schema fk-table-name fk-column-name true)))
         pk-id (:id (t2/query-one (fk-field-id-subquery db-id pk-table-schema pk-table-name pk-column-name false)))]
     (if (and fk-id pk-id)
-      (let [settings (field-user-settings fk-id)
-            user-set (warehouse-schema.user-settings/user-set-field-columns settings)
-            field    (t2/select-one [:model/Field :id :fk_target_field_id :has_field_values] :id fk-id)]
+      (let [field    (t2/select-one [:model/Field :id :fk_target_field_id :has_field_values :updated_at] :id fk-id)
+            user-set (warehouse-schema.user-settings/user-set-field-columns (field-user-settings fk-id))]
         (if (and (not (user-set :fk_target_field_id)) (not= pk-id (:fk_target_field_id field)))
-          (update-field-unless-settings-changed!
-           fk-id settings (apply dissoc
-                                 (cond-> {:fk_target_field_id pk-id :semantic_type :type/FK}
-                                   (= :auto-list (:has_field_values field)) (assoc :has_field_values nil))
-                                 user-set))
+          (update-field-unless-updated-since!
+           fk-id (:updated_at field) (apply dissoc
+                                            (cond-> {:fk_target_field_id pk-id :semantic_type :type/FK}
+                                              (= :auto-list (:has_field_values field)) (assoc :has_field_values nil))
+                                            user-set))
           0))
       0)))
 
