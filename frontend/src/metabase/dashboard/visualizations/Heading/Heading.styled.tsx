@@ -82,6 +82,10 @@ export const HeadingContent = styled.h2<HeadingContentProps>`
   overflow-y: auto;
   font-size: ${HEADING_FONT_SIZE};
   font-weight: ${HEADING_FONT_WEIGHT};
+  /* Relative to this font size. The body's line height is computed at 14px
+     and inherited as 17px, which clips CJK glyphs and shows a scrollbar.
+     1.3 still fits a one-row card: 29px plus margins in the 40px minimum. */
+  line-height: 1.3;
   padding: 0;
   margin: 0.25rem 0;
   pointer-events: all;

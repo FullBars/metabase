@@ -113,6 +113,18 @@ describe("Text", () => {
         screen.getByTestId("saved-dashboard-heading-content"),
       ).toHaveTextContent(`Variable: ${parameterValue}`);
     });
+
+    it("should size its line height to the heading font so tall glyphs are not clipped", () => {
+      setup({ settings: getSettingsWithText("核心指标") });
+
+      // Inheriting the body's line height gives a 17px line box for 22px
+      // text, which clips CJK glyphs and shows a scrollbar.
+      const { lineHeight } = getComputedStyle(
+        screen.getByTestId("saved-dashboard-heading-content"),
+      );
+      expect(lineHeight).toMatch(/^\d+(\.\d+)?$/);
+      expect(Number(lineHeight)).toBeGreaterThanOrEqual(1.2);
+    });
   });
 
   describe("Editing Dashboard", () => {
