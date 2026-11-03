@@ -17,22 +17,25 @@ export function useResponsiveParameterList({
   const [shouldCollapseList, setShouldCollapseList] = useState(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
-  const parameterListRef = useRef<HTMLDivElement>(null);
+  // Kept in state so the check reruns when the list mounts. Scalar cards
+  // render their filters only after the data has loaded, without resizing.
+  const [parameterList, parameterListRef] = useState<HTMLDivElement | null>(
+    null,
+  );
 
   const checkForCollision = useCallback(() => {
-    if (!containerRef.current || !parameterListRef.current) {
+    if (!containerRef.current || !parameterList) {
       return false;
     }
 
     const { width: containerWidth } =
       containerRef.current.getBoundingClientRect();
-    const { width: parametersWidth } =
-      parameterListRef.current.getBoundingClientRect();
+    const { width: parametersWidth } = parameterList.getBoundingClientRect();
 
     const requiredWidth = reservedWidth + parametersWidth + bufferSpace;
 
     return requiredWidth > containerWidth;
-  }, [reservedWidth, bufferSpace]);
+  }, [reservedWidth, bufferSpace, parameterList]);
 
   useEffect(() => {
     if (isEditingParameter) {
@@ -52,10 +55,17 @@ export function useResponsiveParameterList({
     }
 
     resizeObserver.subscribe(element, updateCollisionState);
+    // Filter values change the width of the list, not of the card.
+    if (parameterList) {
+      resizeObserver.subscribe(parameterList, updateCollisionState);
+    }
     return () => {
       resizeObserver.unsubscribe(element, updateCollisionState);
+      if (parameterList) {
+        resizeObserver.unsubscribe(parameterList, updateCollisionState);
+      }
     };
-  }, [checkForCollision, isEditing, isEditingParameter]);
+  }, [checkForCollision, isEditing, isEditingParameter, parameterList]);
 
   return {
     shouldCollapseList,
