@@ -68,14 +68,14 @@
   (delete-when-empty! settings))
 
 (defn- system-value
-  "The value `field` has for `column` when no user set it."
+  "The value `field` gets for `column` when no user sets it any more, or `::keep` for a column whose current value stays
+  because sync writes it."
   [field column]
   (case column
     :display_name    (humanization/name->human-readable-name (:name field))
-    :visibility_type :normal
     :effective_type  (:base_type field)
-    :json_unfolding  false
     :custom_position 0
+    (:semantic_type :description :visibility_type :has_field_values :fk_target_field_id :json_unfolding) ::keep
     nil))
 
 (mu/defn- write-user-values!
@@ -86,7 +86,11 @@
   (let [field    (warehouse-schema.db/field field-id)
         settings (warehouse-schema.db/field-user-settings field-id)
         user-set (user-settings/user-set-field-columns settings)
-        values   (merge (into {} (map (juxt identity (partial system-value field))) (remove user-set previously-set))
+        values   (merge (into {}
+                              (keep (fn [column]
+                                      (let [value (system-value field column)]
+                                        (when-not (= value ::keep) [column value]))))
+                              (remove user-set previously-set))
                         (select-keys settings user-set))
         changes  (into {} (remove (fn [[column value]] (= value (get field column)))) values)]
     (when (seq changes)

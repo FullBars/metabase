@@ -345,7 +345,18 @@
       (field-user-settings/unset-field-user-settings! edited [:effective_type :coercion_strategy])
       (is (=? {:effective_type :type/Text :coercion_strategy nil} (t2/select-one :model/Field :id edited-id))))))
 
-(deftest upsert-user-settings-flags-test
+(deftest deleting-field-settings-keeps-values-sync-writes-test
+  (testing "deleting the settings keeps the columns sync writes, and gives back the others"
+    (mt/with-temp [:model/Field {field-id :id :as field} {:name "sync_name" :semantic_type :type/Category}]
+      (field-user-settings/upsert-field-user-settings! field {:semantic_type    :type/Email
+                                                              :visibility_type  :sensitive
+                                                              :display_name     "User Name"})
+      (field-user-settings/delete-field-user-settings! [field-id])
+      (is (=? {:semantic_type :type/Email :visibility_type :sensitive :display_name "Sync Name"}
+              (t2/select-one :model/Field :id field-id)))
+      (is (nil? (t2/select-one :model/FieldUserSettings :field_id field-id))))))
+
+(deftest upsert-field-user-settings-flags-test
   (mt/with-temp [:model/Field {field-id :id :as field} {}
                  :model/Field {target-id :id} {}]
     (testing "only the flagged columns present in the settings are flagged"
@@ -357,7 +368,7 @@
       (field-user-settings/upsert-field-user-settings! field {:description nil})
       (is (=? {:description nil :description_set true :semantic_type_set true}
               (t2/select-one :model/FieldUserSettings :field_id field-id))))
-    (testing "unset-user-settings! drops the values and their flags"
+    (testing "unset-field-user-settings! drops the values and their flags"
       (field-user-settings/unset-field-user-settings! field [:semantic_type :fk_target_field_id :display_name])
       (is (=? {:display_name nil :semantic_type nil :fk_target_field_id nil
                :description_set true :semantic_type_set false :fk_target_field_id_set false}

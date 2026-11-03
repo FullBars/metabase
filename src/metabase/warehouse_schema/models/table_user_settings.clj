@@ -41,18 +41,21 @@
 (methodical/defmethod t2/primary-keys :model/TableUserSettings [_model] [:table_id])
 
 (defn- complete-pairs
-  "Fill in the other half of the two-column choices in `settings`: `visibility_type`/`data_layer`, and
-  `is_published`/`collection_id`."
+  "Fill in the other half of the two-column choices in `settings`: `visibility_type`/`data_layer`, derived from a
+  changing half or else kept from `table`, and `is_published`/`collection_id`."
   [settings table]
-  (let [changing? (fn [k] (and (contains? settings k)
-                               (not= (some-> (get settings k) keyword)
-                                     (some-> (get table k) keyword))))]
+  (let [changing? (fn [k] (not= (some-> (get settings k) keyword)
+                                (some-> (get table k) keyword)))]
     (cond-> settings
-      (and (changing? :visibility_type) (not (contains? settings :data_layer)))
-      (assoc :data_layer (table/visibility-type->data-layer (some-> (:visibility_type settings) keyword)))
+      (and (contains? settings :visibility_type) (not (contains? settings :data_layer)))
+      (assoc :data_layer (if (changing? :visibility_type)
+                           (table/visibility-type->data-layer (some-> (:visibility_type settings) keyword))
+                           (:data_layer table)))
 
-      (and (changing? :data_layer) (not (contains? settings :visibility_type)))
-      (assoc :visibility_type (table/data-layer->visibility-type (some-> (:data_layer settings) keyword)))
+      (and (contains? settings :data_layer) (not (contains? settings :visibility_type)))
+      (assoc :visibility_type (if (changing? :data_layer)
+                                (table/data-layer->visibility-type (some-> (:data_layer settings) keyword))
+                                (:visibility_type table)))
 
       (and (contains? settings :collection_id) (not (contains? settings :is_published)))
       (assoc :is_published (boolean (:is_published table))))))
@@ -101,15 +104,15 @@
   (delete-when-empty! settings))
 
 (defn- system-value
-  "The value `table` has for `column` when no user set it."
+  "The value `table` gets for `column` when no user sets it any more, or `::keep` for a column whose current value stays
+  because sync, uploads or transforms write it."
   [table column]
   (case column
     :display_name            (humanization/name->human-readable-name (:name table))
     :field_order             (driver/default-field-order (warehouse-schema.db/database-engine (:db_id table)))
     :show_in_getting_started false
     :is_published            false
-    :data_authority          :unconfigured
-    :data_layer              :internal
+    (:description :entity_type :visibility_type :data_layer :data_source :data_authority) ::keep
     nil))
 
 (defn- without-derived-half
@@ -129,7 +132,11 @@
   (let [table    (warehouse-schema.db/table table-id)
         settings (warehouse-schema.db/table-user-settings table-id)
         user-set (user-settings/user-set-table-columns settings)
-        values   (merge (into {} (map (juxt identity (partial system-value table))) (remove user-set previously-set))
+        values   (merge (into {}
+                              (keep (fn [column]
+                                      (let [value (system-value table column)]
+                                        (when-not (= value ::keep) [column value]))))
+                              (remove user-set previously-set))
                         (select-keys settings user-set))
         same?    (fn [x y] (= (cond-> x (keyword? x) u/qualified-name) (cond-> y (keyword? y) u/qualified-name)))
         changes  (into {} (remove (fn [[column value]] (same? value (get table column)))) values)]
@@ -151,8 +158,8 @@
           (write-user-values! id (user-settings/user-set-table-columns existing)))))))
 
 (mu/defn upsert-table-user-settings-for-tables!
-  "[[upsert-table-user-settings!]] for every Table in `table-ids`, with one statement per kind for the settings and one for
-  the rows."
+  "[[upsert-table-user-settings!]] for every Table in `table-ids`, with one statement per kind for the settings and, unless
+  `display_name` or `field_order` needs a per-Table value, one for the rows."
   [table-ids :- [:set ::lib.schema.id/table]
    settings  :- ::warehouse-schema.schema/table.update]
   (let [settings (u/select-keys-when settings :present user-settings/user-settable-table-columns)]
@@ -167,12 +174,15 @@
         (if (some #{:display_name :field_order} (keys settings))
           (doseq [table-id table-ids]
             (write-user-values! table-id (set (keys settings))))
-          (warehouse-schema.db/update-tables!
-           table-ids
-           (into {}
-                 (map (fn [[column value]]
-                        [column (if (and (nil? value) (not (user-settings/table-set-flags column))) (system-value nil column) value)]))
-                 settings)))))))
+          (when-let [changes (not-empty
+                              (into {}
+                                    (keep (fn [[column value]]
+                                            (let [value (if (and (nil? value) (not (user-settings/table-set-flags column)))
+                                                          (system-value nil column)
+                                                          value)]
+                                              (when-not (= value ::keep) [column value]))))
+                                    settings))]
+            (warehouse-schema.db/update-tables! table-ids changes)))))))
 
 (defn- valid-field-order?
   "Field ordering is valid if all the fields from a given table are present and only from that table."

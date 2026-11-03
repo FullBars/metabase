@@ -102,3 +102,21 @@
       (is (= {f2 0 f1 1} (t2/select-fn->fn :field_id :custom_position :model/FieldUserSettings :field_id [:in [f1 f2]])))
       (is (= [f2 f1] (t2/select-pks-vec :model/Field :table_id table-id {:order-by [[:position :asc]]})))
       (is (= {f2 0 f1 1} (t2/select-pk->fn :custom_position :model/Field :table_id table-id))))))
+
+(deftest deleting-settings-keeps-values-written-outside-user-edits-test
+  (testing "deleting the settings keeps the columns sync, uploads and transforms write, and gives back the others"
+    (mt/with-temp [:model/Table {table-id :id :as table} {:name "sync_name" :data_authority :unconfigured}]
+      (table-user-settings/upsert-table-user-settings! table {:data_authority :authoritative
+                                                              :display_name   "User Name"
+                                                              :description    "user description"})
+      (table-user-settings/delete-table-user-settings! [table-id])
+      (is (=? {:data_authority :authoritative :description "user description" :display_name "Sync Name"}
+              (user-table table-id)))
+      (is (nil? (t2/select-one :model/TableUserSettings :table_id table-id))))))
+
+(deftest unchanged-half-of-visibility-pair-is-recorded-test
+  (testing "setting data_layer to its current value records visibility_type as set too"
+    (mt/with-temp [:model/Table {table-id :id :as table} {:visibility_type :cruft :data_layer :hidden}]
+      (table-user-settings/upsert-table-user-settings! table {:data_layer :hidden})
+      (is (=? {:visibility_type :cruft :data_layer :hidden :visibility_type_set true :data_layer_set true}
+              (t2/select-one :model/TableUserSettings :table_id table-id))))))
