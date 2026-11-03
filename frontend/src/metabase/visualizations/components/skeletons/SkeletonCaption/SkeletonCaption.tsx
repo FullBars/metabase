@@ -1,7 +1,7 @@
 import type { HTMLAttributes } from "react";
 
-import { Markdown } from "metabase/common/components/Markdown";
-import { Box, Ellipsified, Flex, Icon, Tooltip } from "metabase/ui";
+import { DescriptionTooltip } from "metabase/common/components/DescriptionTooltip";
+import { Box, Ellipsified, Flex, Icon } from "metabase/ui";
 import type { VisualizationSkeletonProps } from "metabase/visualizations/components/skeletons/VisualizationSkeleton/VisualizationSkeleton";
 
 import S from "./SkeletonCaption.module.css";
@@ -24,14 +24,7 @@ const SkeletonCaption = ({
       )}
       <Flex justify="flex-end" align="center" ml="auto">
         {description && (
-          <Tooltip
-            maw="22em"
-            label={
-              <Markdown dark compact disallowHeading unstyleLinks lineClamp={8}>
-                {description}
-              </Markdown>
-            }
-          >
+          <DescriptionTooltip description={description}>
             <Box
               component="span"
               className={S.descriptionIcon}
@@ -40,7 +33,7 @@ const SkeletonCaption = ({
             >
               <Icon name="info" />
             </Box>
-          </Tooltip>
+          </DescriptionTooltip>
         )}
 
         {actionMenu}

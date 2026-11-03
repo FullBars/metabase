@@ -1,7 +1,7 @@
 import { t } from "ttag";
 
+import { DescriptionTooltip } from "metabase/common/components/DescriptionTooltip";
 import { EntityIcon } from "metabase/common/components/EntityIcon";
-import { Markdown } from "metabase/common/components/Markdown";
 import type { IconData } from "metabase/common/utils/icon";
 import { useGetIcon } from "metabase/hooks/use-icon";
 import { Icon } from "metabase/ui";
@@ -38,15 +38,12 @@ export const EntityDisplay = ({
         <EllipsifiedEntityContainer>{entity?.name}</EllipsifiedEntityContainer>
       </LeftContainer>
       {showDescription && entity?.description && (
-        <Icon
-          name="info"
-          c="text-disabled"
-          tooltip={
-            <Markdown dark compact disallowHeading unstyleLinks lineClamp={8}>
-              {entity.description}
-            </Markdown>
-          }
-        />
+        <DescriptionTooltip
+          description={entity.description}
+          data-testid="icon-tooltip"
+        >
+          <Icon name="info" c="text-disabled" />
+        </DescriptionTooltip>
       )}
     </EntityDisplayContainer>
   );

@@ -1,0 +1,6 @@
+.body {
+  /* The tooltip's padding and the viewport margin kept by the shift middleware. */
+  max-block-size: calc(100dvh - 2rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}

@@ -2,12 +2,12 @@ import cx from "classnames";
 import React, { useCallback, useState } from "react";
 import { t } from "ttag";
 
-import { Markdown } from "metabase/common/components/Markdown";
+import { DescriptionTooltip } from "metabase/common/components/DescriptionTooltip";
 import { useTranslateContent } from "metabase/content-translation/hooks";
 import CS from "metabase/css/core/index.css";
 import DashboardS from "metabase/css/dashboard.module.css";
 import type { IconProps } from "metabase/ui";
-import { Ellipsified, Icon, Menu, Tooltip } from "metabase/ui";
+import { Ellipsified, Icon, Menu } from "metabase/ui";
 import { SAVING_DOM_IMAGE_OVERFLOW_VISIBLE_CLASS } from "metabase/viz-core";
 
 import { LegendActions } from "../LegendActions";
@@ -129,21 +129,14 @@ export const LegendCaption = ({
         titleElement
       )}
       {hasInfoTooltip && description && !shouldHideDescription(width) && (
-        <Tooltip
-          label={
-            <Markdown dark compact disallowHeading unstyleLinks lineClamp={8}>
-              {tc(description)}
-            </Markdown>
-          }
-          maw="22em"
-        >
+        <DescriptionTooltip description={tc(description)}>
           <LegendDescriptionIcon
             name="info"
             className={cx(CS.hoverChild, CS.hoverChildSmooth)}
             mt="3px"
             mr="lg"
           />
-        </Tooltip>
+        </DescriptionTooltip>
       )}
       <LegendRightContent>
         {actionButtons && <LegendActions>{actionButtons}</LegendActions>}

@@ -1,6 +1,6 @@
-import { Markdown } from "metabase/common/components/Markdown";
+import { DescriptionTooltip } from "metabase/common/components/DescriptionTooltip";
 import { useTranslateContent } from "metabase/content-translation/hooks";
-import { Box, Icon, Tooltip } from "metabase/ui";
+import { Box, Icon } from "metabase/ui";
 
 import S from "./ScalarDescription.module.css";
 
@@ -10,17 +10,10 @@ export function ScalarDescription({ description }: { description: string }) {
   const tc = useTranslateContent();
 
   return (
-    <Tooltip
-      label={
-        <Markdown dark compact disallowHeading unstyleLinks lineClamp={8}>
-          {tc(description)}
-        </Markdown>
-      }
-      maw="22em"
-    >
+    <DescriptionTooltip description={tc(description)}>
       <Box component="span" tabIndex={0} className={S.descriptionIcon}>
         <Icon name="info" size={DESCRIPTION_ICON_SIZE} />
       </Box>
-    </Tooltip>
+    </DescriptionTooltip>
   );
 }
