@@ -251,10 +251,15 @@
 
 (mu/defn clear-user-settings-fk-targets-to-field!
   "Unset the user-set FK semantic type and target of every ::warehouse-schema.schema/field targeting the
-  ::warehouse-schema.schema/field with `field-id`, returning the number updated."
+  ::warehouse-schema.schema/field with `field-id`, by its settings or by its own row, returning the number updated."
   [field-id :- ::lib.schema.id/field]
-  (t2/update! :model/FieldUserSettings {:fk_target_field_id field-id}
-              {:semantic_type nil, :semantic_type_set false, :fk_target_field_id nil, :fk_target_field_id_set false}))
+  (let [changes {:semantic_type nil, :semantic_type_set false, :fk_target_field_id nil, :fk_target_field_id_set false}]
+    (+ (t2/update! :model/FieldUserSettings {:fk_target_field_id field-id} changes)
+       (t2/update! :model/FieldUserSettings
+                   :field_id [:in ^:allow-subquery {:select [:id]
+                                                    :from   [(t2/table-name :model/Field)]
+                                                    :where  [:= :fk_target_field_id field-id]}]
+                   changes))))
 
 ;;; -------------------------------------------- TableUserSettings --------------------------------------------
 

@@ -390,4 +390,12 @@
       (field-user-settings/upsert-field-user-settings! source {:semantic_type :type/FK :fk_target_field_id target-id})
       (t2/update! :model/Field :id target-id {:active false})
       (is (nil? (t2/select-one :model/FieldUserSettings :field_id source-id)))
+      (is (=? {:semantic_type nil :fk_target_field_id nil} (t2/select-one :model/Field :id source-id)))))
+  (testing "retiring Field also drops a user-set FK semantic type whose target sync set"
+    (mt/with-temp [:model/Field {target-id :id} {}
+                   :model/Field {source-id :id :as source} {}]
+      (field-user-settings/upsert-field-user-settings! source {:semantic_type :type/FK})
+      (t2/update! :model/Field :id source-id {:fk_target_field_id target-id})
+      (t2/update! :model/Field :id target-id {:active false})
+      (is (not (t2/select-one-fn :semantic_type_set :model/FieldUserSettings :field_id source-id)))
       (is (=? {:semantic_type nil :fk_target_field_id nil} (t2/select-one :model/Field :id source-id))))))
