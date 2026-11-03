@@ -138,10 +138,8 @@
                                       (let [value (system-value table column)]
                                         (when-not (= value ::keep) [column value]))))
                               (remove user-set previously-set))
-                        (select-keys settings user-set))
-        same?    (fn [x y] (= (cond-> x (keyword? x) u/qualified-name) (cond-> y (keyword? y) u/qualified-name)))
-        changes  (into {} (remove (fn [[column value]] (same? value (get table column)))) values)]
-    (warehouse-schema.db/update-table! table-id (assoc (without-derived-half changes) :updated_at (mi/current-timestamp)))))
+                        (select-keys settings user-set))]
+    (warehouse-schema.db/update-table! table-id (assoc (without-derived-half values) :updated_at (mi/current-timestamp)))))
 
 (mu/defn upsert-table-user-settings!
   "Record the user-settable Table columns present in `settings` as the user values of `table`, in its settings and its

@@ -93,9 +93,8 @@
                                       (let [value (system-value field column)]
                                         (when-not (= value ::keep) [column value]))))
                               (remove user-set previously-set))
-                        (select-keys settings user-set))
-        changes  (into {} (remove (fn [[column value]] (= value (get field column)))) values)]
-    (warehouse-schema.db/update-field! field-id (assoc changes :updated_at (mi/current-timestamp)))))
+                        (select-keys settings user-set))]
+    (warehouse-schema.db/update-field! field-id (assoc values :updated_at (mi/current-timestamp)))))
 
 (mu/defn upsert-field-user-settings!
   "Record the user-settable Field columns present in `settings` as the user values of `field`, in its settings and its
