@@ -602,6 +602,21 @@
       (is (=? {:fk_target_field_id pk-id :semantic_type :type/FK :has_field_values :auto-list}
               (t2/select-one :model/Field :id fk-id))))))
 
+(deftest sync-update-skips-field-whose-settings-changed-test
+  (testing "sync's update of a Field applies only while its settings are still the ones sync read"
+    (mt/with-temp [:model/Field {field-id :id :as field} {:description "old"}]
+      (testing "a user edit since sync found no settings"
+        (field-user-settings/upsert-field-user-settings! field {:display_name "User Name"})
+        (is (= 0 (sync.db/update-field-unless-settings-changed! field-id nil {:description "sync"}))))
+      (let [settings (sync.db/field-user-settings field-id)]
+        (testing "a user edit since sync read the settings"
+          (is (= 0 (sync.db/update-field-unless-settings-changed!
+                    field-id (assoc settings :updated_at #t "2020-01-01T00:00:00Z")
+                    {:description "sync"}))))
+        (testing "settings unchanged since sync read them"
+          (is (= 1 (sync.db/update-field-unless-settings-changed! field-id settings {:description "sync"}))))
+        (is (= "sync" (t2/select-one-fn :description :model/Field :id field-id)))))))
+
 (deftest database-default-test
   (with-test-db
     (let [ddl "CREATE TABLE t (a INTEGER DEFAULT 42, b INTEGER NULL)"]

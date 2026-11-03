@@ -5,6 +5,7 @@
    [metabase.driver.util :as driver.u]
    [metabase.lib.metadata :as lib.metadata]
    [metabase.sync.core :as sync]
+   [metabase.sync.db :as sync.db]
    [metabase.sync.sync-metadata.fields.sync-metadata :as sync-metadata]
    [metabase.test :as mt]
    [metabase.util :as u]
@@ -23,7 +24,11 @@
                                        (seq db-settings) (assoc :settings db-settings))
                   :model/Table table (assoc table :db_id (u/the-id db))]
      (let [update-operations (atom [])]
-       (mt/with-dynamic-fn-redefs [t2/update! (fn [model _pk-column id updates]
+       (mt/with-dynamic-fn-redefs [sync.db/update-field-unless-settings-changed!
+                                   (fn [id _settings updates]
+                                     (swap! update-operations conj ["Field" id updates])
+                                     (count updates))
+                                   t2/update! (fn [model _pk-column id updates]
                                                 (swap! update-operations conj [(name model) id updates])
                                                 (count updates))]
          (#'sync-metadata/update-field-metadata-if-needed!
