@@ -147,11 +147,7 @@
 
 (mi/define-batched-hydration-method with-table
   :table
-  "Hydrate the Table of each of `instances` from its `table_id`.
-
-  Batched rather than automagic because automagic hydration selects the model's own row, which shows what sync wrote:
-  `mi/can-read?`/`can-query?` read `is_published` and `collection_id` off the hydrated Table to decide access through
-  a published collection, and those are user values."
+  "Hydrate the Table of each of `instances` from its `table_id`, with one query for all of them."
   [instances]
   (let [table-ids (into #{} (keep :table_id) instances)
         id->table (when (seq table-ids)

@@ -508,8 +508,7 @@
   "Return the ID, name, schema, and database ID of each table in `table-ids`.
 
   Rows also include `:is_published` and `:collection_id`, which `can-read?` and `can-query?` need to check access
-  through a collection. Both keys must be present, even when nil.
-  Both are user values, so the rows read through the user-settings overlay."
+  through a collection, present even when nil."
   [table-ids :- [:sequential ::lib.schema.id/table]]
   (t2/select [:model/Table :id :name :schema :db_id :is_published :collection_id] :id [:in table-ids]))
 

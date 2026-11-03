@@ -7,7 +7,7 @@
    [toucan2.core :as t2]))
 
 (defn- user-table-fn
-  "The value of `column` on the Table with `table-id`"
+  "The value of `column` on the Table with `table-id`."
   [column table-id]
   (t2/select-one-fn column :model/Table :id table-id))
 

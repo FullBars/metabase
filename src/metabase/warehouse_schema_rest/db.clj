@@ -160,7 +160,7 @@
   (t2/select-pks-set :model/Field :table_id table-id))
 
 (mu/defn active-fields-targeting
-  "The active Fields whose FK target, as users see it, is one of `field-ids`."
+  "The active Fields whose FK target is one of `field-ids`."
   [field-ids :- [:sequential ::lib.schema.id/field]]
   (t2/select :model/Field :fk_target_field_id [:in field-ids] :active true))
 

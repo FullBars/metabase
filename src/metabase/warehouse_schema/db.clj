@@ -185,11 +185,6 @@
   [field-id :- [:maybe ::lib.schema.id/field]]
   (t2/select-one :model/FieldUserSettings :field_id field-id))
 
-(mu/defn field-user-settings-exist?
-  "Whether the ::warehouse-schema.schema/field with `field-id` has a FieldUserSettings row."
-  [field-id :- ::lib.schema.id/field]
-  (t2/exists? :model/FieldUserSettings :field_id field-id))
-
 (def ^:private field-user-settings-update-keys
   "The columns an insert or update of a FieldUserSettings accepts."
   [:field_id :created_at :updated_at :semantic_type :description :display_name :visibility_type :fk_target_field_id :has_field_values :effective_type :coercion_strategy :caveats :points_of_interest :json_unfolding :settings :data_sensitivity :custom_position :description_set :semantic_type_set :fk_target_field_id_set])
@@ -256,7 +251,7 @@
 
 (mu/defn clear-user-settings-fk-targets-to-field!
   "Unset the user-set FK semantic type and target of every ::warehouse-schema.schema/field targeting the
-  ::warehouse-schema.schema/field with `field-id`, so the sync values show again. Returns the number updated."
+  ::warehouse-schema.schema/field with `field-id`, returning the number updated."
   [field-id :- ::lib.schema.id/field]
   (t2/update! :model/FieldUserSettings {:fk_target_field_id field-id}
               {:semantic_type nil, :semantic_type_set false, :fk_target_field_id nil, :fk_target_field_id_set false}))
@@ -308,16 +303,6 @@
   "Delete the TableUserSettings of the ::warehouse-schema.schema/table with `table-id`, returning the number deleted."
   [table-id :- ::lib.schema.id/table]
   (t2/delete! :model/TableUserSettings :table_id table-id))
-
-(mu/defn delete-field-user-settings-for-table!
-  "Delete the FieldUserSettings of the Fields of the ::warehouse-schema.schema/table with `table-id`, returning the
-  number deleted."
-  [table-id :- ::lib.schema.id/table]
-  (t2/delete! :model/FieldUserSettings
-              {:where [:exists ^:allow-subquery
-                       {:select 1
-                        :from   [[(t2/table-name :model/Field) :f]]
-                        :where  [:and [:= :f.id :field_id] [:= :f.table_id table-id]]}]}))
 
 (mu/defn table-user-settings-for-tables
   "The TableUserSettings of the Tables with `table-ids`, or every TableUserSettings when nil."

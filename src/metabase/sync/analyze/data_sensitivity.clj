@@ -3,9 +3,9 @@
   [[metabase.analyze.core/infer-data-sensitivity]], writing `:PUBLIC` when no rule matches so each field is scanned
   once. Selects fields whose `data_sensitivity` is `NULL` (or `PUBLIC` too under `force?`) across every active table
   in the database, hidden and cruft tables included. Inert unless [[metabase.sync.settings/data-sensitivity-scan-enabled]]
-  is true, except through [[scan-data-sensitivity!]]. User-set labels live in `FieldUserSettings`, which readers apply
-  over the classifier's label, so the classifier never overwrites them. [[reset-data-sensitivity!]] clears the classifier's own labels so a rule
-  change can reach fields that already carry a category."
+  is true, except through [[scan-data-sensitivity!]]. Fields with a label a user set in `FieldUserSettings` are never
+  scanned. [[reset-data-sensitivity!]] clears the classifier's own labels so a rule change can reach fields that
+  already carry a category."
   (:require
    [metabase.analyze.core :as analyze]
    [metabase.driver.util :as driver.u]

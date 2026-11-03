@@ -5,8 +5,8 @@
    [metabase.warehouse-schema.schema :as warehouse-schema.schema]))
 
 (def user-settable-field-columns
-  "The Field columns users can set. Their values are written into `metabase_field`, and
-  `metabase_field_user_settings` records which ones a user set."
+  "The Field columns users can set, whose values `metabase_field` holds while `metabase_field_user_settings` records
+  which ones a user set."
   #{:semantic_type :description :display_name :visibility_type :has_field_values :effective_type :coercion_strategy
     :fk_target_field_id :caveats :points_of_interest :json_unfolding :settings :data_sensitivity :custom_position})
 
@@ -29,8 +29,8 @@
         user-settable-field-columns))
 
 (def user-settable-table-columns
-  "The Table columns users can set. Their values are written into `metabase_table`, and
-  `metabase_table_user_settings` records which ones a user set."
+  "The Table columns users can set, whose values `metabase_table` holds while `metabase_table_user_settings` records
+  which ones a user set."
   #{:display_name :description :entity_type :visibility_type :caveats :points_of_interest :data_layer :data_source
     :owner_email :owner_user_id :field_order :show_in_getting_started :data_authority :is_published :collection_id})
 
