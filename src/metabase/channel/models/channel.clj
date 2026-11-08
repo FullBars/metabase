@@ -1,5 +1,6 @@
 (ns ^{:added "0.51.0"} metabase.channel.models.channel
   (:require
+   [clojure.string :as str]
    [malli.core :as mc]
    [metabase.analytics-interface.core :as analytics]
    [metabase.analytics.core :as analytics.core]
@@ -111,6 +112,26 @@
   [_model-name _opts]
   {:copy           [:name :description :type :details :active]
    :defaults {:active true}})
+
+(defn active-webhooks
+  "The `:id` and `:name` of every active webhook (`:channel/http`) channel, by name: what an agent picks an alert's
+  delivery from, such as a Feishu group bot an admin set up. Never the details, which hold the URL and credentials."
+  []
+  (channel.db/active-webhook-ids-and-names))
+
+(defn find-active-webhook
+  "The active webhook in [[active-webhooks]] named `name-or-id`: its id, as an integer or a numeric string, or its
+  name, ignoring case and surrounding whitespace. Nil when there is none."
+  [name-or-id]
+  (let [webhooks (active-webhooks)
+        id       (cond
+                   (int? name-or-id)                                             name-or-id
+                   (and (string? name-or-id) (re-matches #"\d+" name-or-id)) (parse-long name-or-id))
+        norm     #(u/lower-case-en (str/trim %))]
+    (or (when id
+          (some #(when (= id (:id %)) %) webhooks))
+        (when (string? name-or-id)
+          (some #(when (= (norm name-or-id) (norm (:name %))) %) webhooks)))))
 
 ;; ------------------------------------------------------------------------------------------------;;
 ;;                                       :model/ChannelTemplate                                    ;;

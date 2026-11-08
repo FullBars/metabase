@@ -33,7 +33,9 @@
         (is (> (count (:tools profile)) 5))
         (is (contains? (tool-names profile) "search"))
         (is (contains? (tool-names profile) "create_sql_query"))
-        (is (contains? (tool-names profile) "create_chart"))))
+        (is (contains? (tool-names profile) "create_chart"))
+        (testing "the in-app Metabot can create alerts, e.g. to a Feishu group bot webhook"
+          (is (contains? (tool-names profile) "create_alert")))))
     (testing "retrieves sql profile"
       (let [profile (profiles/get-profile :sql)]
         (is (=? {:name :sql

@@ -58,7 +58,7 @@
 (api-scope/defscope agent-sql-run "agent:sql:run"
   (deferred-tru "Write and run its own raw SQL on your connected databases"))
 (api-scope/defscope agent-delivery-write "agent:delivery:write"
-  (deferred-tru "Set up scheduled delivery of your data to email addresses and Slack channels it chooses"))
+  (deferred-tru "Set up scheduled delivery of your data to email addresses and Slack channels it chooses, and to webhooks an admin set up"))
 
 ;; Question (saved cards via Agent API)
 (api-scope/defscope agent-question-create "agent:question:create"

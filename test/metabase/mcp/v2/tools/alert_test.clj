@@ -356,6 +356,84 @@
                                                       :schedule (daily-schedule 9)
                                                       :channel "slack" :slack_channel "data-team"}))))))))))
 
+(def ^:private feishu-bot-details
+  {:url "https://open.feishu.cn/open-apis/bot/v2/hook/test-token" :auth-method "none"})
+
+(deftest webhook-channel-test
+  (mt/with-model-cleanup [:model/Notification]
+    (mt/with-temp [:model/Card    {card-id :id} {}
+                   :model/Channel {chan-id :id} {:name "飞书 · 数据告警" :type :channel/http :active true
+                                                 :details feishu-bot-details}
+                   :model/Channel _             {:name "Retired hook" :type :channel/http :active false
+                                                 :details feishu-bot-details}]
+      (testing "a webhook alert delivers through the webhook an admin set up, named by the agent"
+        (let [result (create-alert! card-id {:channel "webhook" :webhook "飞书 · 数据告警"})]
+          (is (=? [{:channel_type "channel/http" :channel_id chan-id}]
+                  (:handlers result)))
+          (is (= [[:channel/http chan-id]]
+                 (t2/select-fn-vec (juxt :channel_type :channel_id) :model/NotificationHandler
+                                   :notification_id (:id result))))))
+      (testing "the webhook can also be named by its id"
+        (is (=? [{:channel_type "channel/http" :channel_id chan-id}]
+                (:handlers (create-alert! card-id {:channel "webhook" :webhook chan-id})))))
+      (testing "an unknown webhook is a teaching error that lists the active webhooks to pick from"
+        (let [error (tool-error (call-tool! :crowberto v2.tu/all-scopes
+                                            (wire {:method "create" :card_id card-id :schedule (daily-schedule 9)
+                                                   :channel "webhook" :webhook "no-such-hook"})))]
+          (is (re-find #"no-such-hook" error))
+          (is (re-find #"飞书 · 数据告警" error))
+          (is (not (re-find #"Retired hook" error)))))
+      (testing "an inactive webhook can't be picked"
+        (is (re-find #"Retired hook"
+                     (tool-error (call-tool! :crowberto v2.tu/all-scopes
+                                             (wire {:method "create" :card_id card-id :schedule (daily-schedule 9)
+                                                    :channel "webhook" :webhook "Retired hook"}))))))
+      (testing "channel webhook without webhook names the missing argument"
+        (is (re-find #"\"webhook\" is required"
+                     (tool-error (call-tool! :crowberto v2.tu/all-scopes
+                                             (wire {:method "create" :card_id card-id :schedule (daily-schedule 9)
+                                                    :channel "webhook"}))))))
+      (testing "recipients don't apply to a webhook alert"
+        (is (re-find #"recipients"
+                     (tool-error (call-tool! :crowberto v2.tu/all-scopes
+                                             (wire {:method "create" :card_id card-id :schedule (daily-schedule 9)
+                                                    :channel "webhook" :webhook "飞书 · 数据告警"
+                                                    :recipients ["someone@example.com"]}))))))
+      (testing "webhook without channel \"webhook\" is refused rather than silently delivering by email"
+        (is (re-find #"webhook"
+                     (tool-error (call-tool! :crowberto v2.tu/all-scopes
+                                             (wire {:method "create" :card_id card-id :schedule (daily-schedule 9)
+                                                    :webhook "飞书 · 数据告警"})))))))))
+
+(deftest update-webhook-alert-test
+  (mt/with-model-cleanup [:model/Notification]
+    (mt/with-temp [:model/Card    {card-id :id} {}
+                   :model/Channel {chan-id :id} {:name "飞书 · 数据告警" :type :channel/http :active true
+                                                 :details feishu-bot-details}]
+      (let [handlers #(t2/select-fn-vec (juxt :channel_type :channel_id) :model/NotificationHandler
+                                        :notification_id %)]
+        (testing "an email alert can be pointed at a webhook"
+          (let [alert (create-alert! card-id)]
+            (tool-result (call-tool! :crowberto v2.tu/all-scopes
+                                     (wire {:method "update" :id (:id alert)
+                                            :channel "webhook" :webhook "飞书 · 数据告警"})))
+            (is (= [[:channel/http chan-id]] (handlers (:id alert))))))
+        (testing "editing a webhook alert's schedule keeps its webhook"
+          (let [alert (create-alert! card-id {:channel "webhook" :webhook "飞书 · 数据告警"})]
+            (tool-result (call-tool! :crowberto v2.tu/all-scopes
+                                     (wire {:method "update" :id (:id alert) :schedule (daily-schedule 18)})))
+            (is (= [[:channel/http chan-id]] (handlers (:id alert))))
+            (testing "and recipients alone can't turn it into something else"
+              (is (re-find #"recipients"
+                           (tool-error (call-tool! :crowberto v2.tu/all-scopes
+                                                   (wire {:method "update" :id (:id alert)
+                                                          :recipients ["me@example.com"]})))))
+              (is (= [[:channel/http chan-id]] (handlers (:id alert)))))
+            (testing "switching it to email replaces the webhook handler"
+              (tool-result (call-tool! :crowberto v2.tu/all-scopes
+                                       (wire {:method "update" :id (:id alert) :channel "email"})))
+              (is (= [[:channel/email nil]] (handlers (:id alert)))))))))))
+
 ;;; ------------------------------------------------- update -------------------------------------------------------
 
 (deftest slack-channel-on-an-email-alert-is-refused-test
@@ -496,24 +574,23 @@
                  (is (not (str/includes? error "not found"))))))))))))
 
 (deftest update-refuses-to-replace-an-unmanaged-channel-test
-  (testing "an alert delivering over a channel this tool doesn't manage — an http webhook paging
-            an on-call rota, say — must survive an edit that names a channel the tool does manage.
-            Guarding the requested channel rather than the stored one let `channel: \"email\"`
-            replace the webhook handler outright and still report success."
-    (mt/with-temp [:model/Channel {chan-id :id} {:name    "PagerDuty"
-                                                 :type    :channel/http
+  (testing "an alert delivering over a channel this tool doesn't manage must survive an edit that
+            names a channel the tool does manage. Guarding the requested channel rather than the
+            stored one let `channel: \"email\"` replace the unmanaged handler outright and still
+            report success. (Webhooks are managed now, so the test-only channel type stands in.)"
+    (mt/with-temp [:model/Channel {chan-id :id} {:name    "Test channel"
+                                                 :type    :channel/metabase-test
                                                  :active  true
-                                                 :details {:url         "https://events.pagerduty.example/enqueue"
-                                                           :auth-method "none"}}]
+                                                 :details {}}]
       (notification.tu/with-card-notification
         [notification {:card         {}
                        :notification {:creator_id (mt/user->id :crowberto)}
-                       :handlers     [{:channel_type :channel/http :channel_id chan-id}]}]
+                       :handlers     [{:channel_type :channel/metabase-test :channel_id chan-id}]}]
         (let [handlers #(t2/select [:model/NotificationHandler :id :channel_type :channel_id]
                                    :notification_id (:id notification))
               before   (handlers)]
           (testing "omitting channel is refused"
-            (is (re-find #"delivers over \"channel/http\", which alert_write doesn't manage"
+            (is (re-find #"delivers over \"channel/metabase-test\", which alert_write doesn't manage"
                          (tool-error (call-tool! :crowberto v2.tu/all-scopes
                                                  (wire {:method "update" :id (:id notification)
                                                         :recipients ["me@example.com"]}))))))

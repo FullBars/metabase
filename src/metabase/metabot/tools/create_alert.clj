@@ -1,9 +1,12 @@
 (ns metabase.metabot.tools.create-alert
   "Agent tool wrapper for creating alerts on saved questions.
-  Gets slack_channel_id from agent context and calls the create-alert tool endpoint directly."
+  Delivers to a webhook an admin set up in Metabase when the agent names one, such as a Feishu group bot, and
+  otherwise to the Slack channel in the agent context."
   (:require
    [clojure.set :as set]
+   [clojure.string :as str]
    [metabase.api.common :as api]
+   [metabase.channel.models.channel :as models.channel]
    [metabase.channel.settings :as channel.settings]
    [metabase.metabot.db :as metabot.db]
    [metabase.metabot.scope :as scope]
@@ -22,19 +25,33 @@
   [schedule]
   (u.cron/schedule-map->cron-string (metabot.tools.u/schedule->schedule-map schedule)))
 
+(defn- unknown-webhook-error
+  [webhook]
+  (let [names (map :name (models.channel/active-webhooks))]
+    (str "no webhook named \"" webhook "\" found. "
+         (if (seq names)
+           (str "The webhooks set up in Metabase are: " (str/join ", " (map #(str "\"" % "\"") names)) ".")
+           (str "No webhooks are set up. Ask an admin to add one in Admin settings > Webhooks "
+                "(a Feishu or Lark group bot's webhook URL works).")))))
+
 (defn- create-alert*
   "Private helper for create-alert (call that instead)."
-  [{:keys [card-id slack-channel schedule send-condition send-once]
+  [{:keys [card-id slack-channel webhook schedule send-condition send-once]
     :or   {send-once false}}]
   (let [card         (some-> (metabot.db/card card-id) api/read-check)
-        channel-name (some->> slack-channel
-                              channel.settings/find-cached-slack-channel-or-username
-                              :display-name)]
+        webhook-id   (some-> webhook models.channel/find-active-webhook :id)
+        channel-name (when-not webhook
+                       (some->> slack-channel
+                                channel.settings/find-cached-slack-channel-or-username
+                                :display-name))]
     (cond
       (nil? card)
       {:error "no saved question with this card_id found"}
 
-      (nil? channel-name)
+      (and webhook (nil? webhook-id))
+      {:error (unknown-webhook-error webhook)}
+
+      (and (not webhook) (nil? channel-name))
       {:error "no slack channel found with this name"}
 
       :else
@@ -48,14 +65,18 @@
                           :send_once      send-once}
           :subscriptions [{:type          :notification-subscription/cron
                            :cron_schedule (schedule->cron schedule)}]
-          :handlers      [{:channel_type :channel/slack
-                           :recipients   [{:type    :notification-recipient/raw-value
-                                           :details {:value channel-name}}]}]})
+          :handlers      [(if webhook-id
+                            {:channel_type :channel/http
+                             :channel_id   webhook-id
+                             :recipients   []}
+                            {:channel_type :channel/slack
+                             :recipients   [{:type    :notification-recipient/raw-value
+                                             :details {:value channel-name}}]})]})
         {:output "success"}))))
 
 (defn create-alert
   "Create an alert (notification when a saved question returns results)."
-  [{:keys [card-id send-condition send-once slack-channel]
+  [{:keys [card-id send-condition send-once slack-channel webhook]
     :as   args}]
   (cond
     (not (int? card-id))
@@ -67,10 +88,10 @@
     (not (#{:has_result :goal_above :goal_below} send-condition))
     {:error (str "unsupported send_condition: " (some-> send-condition name))}
 
-    (not (channel.settings/slack-configured?))
+    (and (not webhook) (not (channel.settings/slack-configured?)))
     {:error "slack is not configured. Ask an admin to set up slack notifications in Metabase settings."}
 
-    (empty? slack-channel)
+    (and (not webhook) (empty? slack-channel))
     {:error "slack_channel is required"}
 
     :else
@@ -108,14 +129,16 @@
    [:card_id :int]
    [:send_condition [:enum "has_result" "goal_above" "goal_below"]]
    [:schedule schedule-schema]
-   [:send_once {:optional true :default false} :boolean]])
+   [:send_once {:optional true :default false} :boolean]
+   [:webhook {:optional true} [:string {:min 1}]]])
 
 (mu/defn ^{:tool-name "create_alert"
            :scope     scope/agent-alert-create}
   create-alert-tool
-  "Create an alert that notifies the user's current Slack channel based on a saved question's
-  results on a recurring schedule. Alerts are for saved questions (cards), not dashboards — use
-  the dashboard subscription tool for dashboard delivery.
+  "Create an alert that sends a saved question's results on a recurring schedule, either to a
+  webhook an admin set up in Metabase (`webhook`) or to the user's current Slack channel. Alerts
+  are for saved questions (cards), not dashboards — use the dashboard subscription tool for
+  dashboard delivery.
 
   When the user asks to be alerted or notified about a saved question's results, you MUST call
   this tool; never claim an alert was created without calling it. If you are missing required
@@ -130,18 +153,25 @@
   `goal_above` and `goal_below` only work on questions that have a goal line configured.
 
   `schedule` is a frequency (hourly, daily, weekly, monthly) plus that frequency's time fields.
-  `send_once` is optional (default false); when true the alert is deleted after it fires once."
-  [{:keys [card_id send_condition schedule send_once]} :- alert-schema]
+  `send_once` is optional (default false); when true the alert is deleted after it fires once.
+
+  `webhook` is optional: the name of a webhook an admin set up in Metabase (Admin settings >
+  Webhooks), such as a Feishu (飞书) or Lark group bot. Pass it when the user asks to
+  send the alert there; the webhook then gets a card with the question's results. Without it the
+  alert posts to the current Slack channel, which only works when the user is talking to you in
+  Slack. If the name is wrong, the error lists the webhooks there are."
+  [{:keys [card_id send_condition schedule send_once webhook]} :- alert-schema]
   (let [slack-channel-id (:slack_channel_id (shared/current-context))]
     (try
-      (when-not slack-channel-id
+      (when-not (or webhook slack-channel-id)
         (throw (ex-info "This tool can only be used from a Slack channel"
                         {:agent-error? true})))
       (let [result (create-alert {:card-id        card_id
                                   :send-condition (keyword send_condition)
                                   :schedule       schedule
                                   :send-once      (boolean send_once)
-                                  :slack-channel  slack-channel-id})]
+                                  :slack-channel  slack-channel-id
+                                  :webhook        webhook})]
         (if (:error result)
           {:output (:error result)}
           {:output (or (:output result) "Alert created successfully.")}))

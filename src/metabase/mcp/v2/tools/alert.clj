@@ -14,6 +14,7 @@
    [medley.core :as m]
    [metabase.api.common :as api]
    [metabase.channel.email.messages :as messages]
+   [metabase.channel.models.channel :as models.channel]
    [metabase.channel.settings :as channel.settings]
    [metabase.mcp.db :as mcp.db]
    [metabase.mcp.scope :as mcp.scope]
@@ -195,21 +196,42 @@
     {:type    :notification-recipient/raw-value
      :details {:value (:display-name channel) :channel_id (:id channel)}}))
 
+(defn- webhook-channel-id
+  "The id of the active webhook (an admin-configured `:channel/http` channel, such as a Feishu group
+   bot) named `webhook` by its name or id. An unknown name teaches the names there are to pick from."
+  [webhook]
+  (or (:id (models.channel/find-active-webhook webhook))
+      (let [names (mapv :name (models.channel/active-webhooks))]
+        (common/throw-teaching-error
+         (if (seq names)
+           (message/msg ["No active webhook named %s. The webhooks set up in Metabase are: %s."]
+                        webhook
+                        (apply message/msg [(str/join ", " (repeat (count names) "%s"))] names))
+           (message/msg [(str "No active webhook named %s, and no webhooks are set up — ask an admin to add one "
+                              "in Admin settings > Webhooks (a Feishu or Lark group bot's webhook "
+                              "URL works), or use channel \"email\".")]
+                        webhook))))))
+
+(def ^:private stored-channel-type
+  "The stored handler `channel_type` of each `channel` this tool writes."
+  {"email" "channel/email", "slack" "channel/slack", "webhook" "channel/http"})
+
 (defn- build-handler
   "The one handler an alert delivers through. `existing` is the alert's stored handler (nil at
    create). When the channel type is unchanged the new handler is built *onto* the stored row, so
    editing recipients patches that handler rather than deleting and recreating it; switching
    channels drops the old row instead."
-  [{:keys [channel slack_channel recipients]} existing]
+  [{:keys [channel slack_channel recipients webhook]} existing]
   (let [existing-type (some-> (:channel_type existing) u/qualified-name)
         channel-type  (or channel
-                          (some-> existing-type (str/replace #"^channel/" ""))
+                          (some (fn [[tool-type stored]] (when (= stored existing-type) tool-type))
+                                stored-channel-type)
                           "email")
-        base          (if (= (str "channel/" channel-type) existing-type) existing {})]
+        base          (if (= (stored-channel-type channel-type) existing-type) existing {})]
     ;; Guard the *stored* channel rather than the requested one. Replacing a handler alert_write
-    ;; doesn't manage — an http webhook, say — drops that delivery silently, so an explicit
-    ;; `channel` must not be able to talk its way past this guard by naming a type we do manage.
-    (when (and existing-type (not (#{"channel/email" "channel/slack"} existing-type)))
+    ;; doesn't manage drops that delivery silently, so an explicit `channel` must not be able to
+    ;; talk its way past this guard by naming a type we do manage.
+    (when (and existing-type (not (contains? (set (vals stored-channel-type)) existing-type)))
       (common/throw-teaching-error
        (message/msg [(str "This alert delivers over %s, which alert_write doesn't manage — edit it in "
                           "Metabase, or leave channel, slack_channel, and recipients out to keep it as it is.")]
@@ -221,7 +243,30 @@
        (message/msg [(str "\"recipients\" can't be empty — an alert with nobody to send to would never reach "
                           "anyone. Pass at least one user id or email address, or leave recipients out: a "
                           "new alert then goes to you, and an existing one keeps the recipients it has.")])))
+    (when (and webhook (not= "webhook" channel-type))
+      (common/throw-teaching-error
+       (message/msg [(str "\"webhook\" only applies to a webhook alert — pass channel \"webhook\" "
+                          "to deliver there, or drop webhook.")])))
     (case channel-type
+      "webhook"
+      (do
+        (when (seq recipients)
+          (common/throw-teaching-error
+           (message/msg [(str "A webhook alert posts to the webhook, so it takes webhook rather than recipients — "
+                              "pass channel \"email\" to send to people instead.")])))
+        (when slack_channel
+          (common/throw-teaching-error
+           (message/msg ["\"slack_channel\" only applies to a Slack alert; a webhook alert takes webhook."])))
+        (assoc base
+               :channel_type :channel/http
+               :channel_id   (cond
+                               webhook             (webhook-channel-id webhook)
+                               (:channel_id base)  (:channel_id base)
+                               :else (common/throw-teaching-error
+                                      (message/msg [(str "\"webhook\" is required when channel is \"webhook\" — "
+                                                         "the name of a webhook set up in Metabase.")])))
+               :recipients   []))
+
       "slack"
       (do
         (when (seq recipients)
@@ -336,7 +381,7 @@
                         "create a new alert on the other question instead.")])))
   (let [condition   (m/remove-vals nil? condition)
         existing    (fetch-alert id)
-        delivery?   (boolean (some #(contains? args %) [:channel :slack_channel :recipients]))
+        delivery?   (boolean (some #(contains? args %) [:channel :slack_channel :recipients :webhook]))
         payload     (cond-> (:payload existing)
                       (:type condition)              (assoc :send_condition (keyword (:type condition)))
                       (some? (:send_once condition)) (assoc :send_once (boolean (:send_once condition))))]
@@ -399,7 +444,7 @@
    too: telling that no-op from a real resume would take a read the token may not be entitled to."
   [updates]
   (cond
-    (some #(contains? updates %) [:channel :slack_channel :recipients])
+    (some #(contains? updates %) [:channel :slack_channel :recipients :webhook])
     (message/raw "Changing where an alert delivers")
 
     (true? (:active updates))
@@ -445,13 +490,21 @@
              [:schedule_day {:optional true} [:maybe [:enum "mon" "tue" "wed" "thu" "fri" "sat" "sun"]]]
              [:schedule_frame {:optional true} [:maybe [:enum "first" "mid" "last"]]]]]]
    [:channel {:optional true}
-    [:maybe [:enum {:description (str "Where to deliver: \"email\" (default) with `recipients`, or \"slack\" with "
-                                      "`slack_channel`. Passing any of channel, slack_channel, or recipients on "
-                                      "update replaces the alert's delivery; omit all three to leave it alone.")}
-             "email" "slack"]]]
+    [:maybe [:enum {:description (str "Where to deliver: \"email\" (default) with `recipients`, \"slack\" with "
+                                      "`slack_channel`, or \"webhook\" with `webhook`. Passing any of channel, "
+                                      "slack_channel, recipients, or webhook on update replaces the alert's delivery; "
+                                      "omit them all to leave it alone.")}
+             "email" "slack" "webhook"]]]
    [:slack_channel {:optional true}
     [:maybe [:string {:min 1
                       :description "Slack channel name to post to, e.g. \"#data-team\". Required for channel \"slack\"."}]]]
+   [:webhook {:optional true}
+    [:maybe [:or
+             [:string {:min 1
+                       :description (str "Name of a webhook an admin set up in Metabase (Admin settings > Webhooks), "
+                                         "such as a Feishu (飞书) or Lark group bot. Required for channel "
+                                         "\"webhook\".")}]
+             [:int {:description "Numeric id of that webhook."}]]]]
    [:recipients {:optional true}
     [:maybe [:sequential {:description (str "Who gets the email: numeric user ids, or email addresses. Defaults "
                                             "to you. On update this replaces the current list. Not used for "
@@ -471,9 +524,11 @@
   | \"last\", required for monthly — \"mid\" is the 15th and takes no schedule_day)} — never a cron string. condition is {type: \"has_result\" (default) |
   \"goal_above\" | \"goal_below\", send_once?: boolean} — the goal conditions need a goal line on the question's chart,
   and send_once archives the alert after it fires. Delivery is one channel: \"email\" (default) with recipients, a list
-  mixing user ids and email addresses that defaults to you, or \"slack\" with slack_channel, a channel name like
-  \"#data-team\" (recipients don't apply). Passing any of channel, slack_channel, or recipients on update replaces the
-  alert's delivery; omit them all to leave it alone. active: false pauses an alert and true resumes it — alerts have no
+  mixing user ids and email addresses that defaults to you, \"slack\" with slack_channel, a channel name like
+  \"#data-team\" (recipients don't apply), or \"webhook\" with webhook, the name of a webhook an admin set up in
+  Metabase, such as a Feishu (飞书) or Lark group bot, which then gets a card with the question's results. Passing any
+  of channel, slack_channel, recipients, or webhook on update replaces the alert's delivery; omit them all to leave it
+  alone. active: false pauses an alert and true resumes it — alerts have no
   archived state, and this tool cannot delete one. An alert's question is fixed at creation. Creating an alert, changing
   its delivery or its schedule, resuming a paused one, or clearing send_once additionally requires the agent:query:run
   scope — the alert runs the question and delivers its results. Pausing one never does. Alerts are for saved questions; use subscription_write to schedule a whole dashboard."
@@ -481,7 +536,7 @@
    :default-access :allowed
    :scope          metabot.scope/agent-delivery-write
    ;; `destructiveHint`: an update can replace the recipients.
-   ;; `openWorldHint`: it sends to email addresses and Slack channels outside Metabase.
+   ;; `openWorldHint`: it sends to email addresses, Slack channels, and webhooks outside Metabase.
    :annotations    {:readOnlyHint false, :destructiveHint true, :openWorldHint true}
    :args           alert-write-args-schema}
   [args {:keys [token-scopes]}]
