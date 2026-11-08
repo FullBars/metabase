@@ -46254,3 +46254,31 @@ msgstr "{0}：随看板"
 #: frontend/src/metabase/parameters/components/ParameterWidget/ParameterWidget.tsx
 msgid "{0}: same as dashboard ({1})"
 msgstr "{0}：随看板（{1}）"
+
+#: metabase/channel/impl/http.clj
+msgid "Feishu rejected the message: {0} (code {1})"
+msgstr "飞书拒绝了这条消息：{0}（code {1}）"
+
+#: metabase/channel/impl/http.clj
+msgid "Metabase can send to this Feishu bot. This is a test message."
+msgstr "Metabase 已连接到这个飞书机器人，这是一条测试消息。"
+
+#: metabase/channel/impl/http.clj
+msgid "Metabase alert: {0}"
+msgstr "Metabase 警报：{0}"
+
+#: metabase/channel/impl/http.clj
+msgid "Metabase alert"
+msgstr "Metabase 警报"
+
+#: metabase/channel/impl/http.clj
+msgid "Rows: {0}"
+msgstr "共 {0} 行结果。"
+
+#: metabase/channel/impl/http.clj
+msgid "Showing the first {0}. Open the question in Metabase for all of them."
+msgstr "仅显示前 {0} 行，完整结果请在 Metabase 中查看。"
+
+#: metabase/channel/impl/http.clj
+msgid "View in Metabase"
+msgstr "在 Metabase 中查看"

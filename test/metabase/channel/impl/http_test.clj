@@ -15,6 +15,7 @@
    [metabase.test :as mt]
    [metabase.util.api-error :as api-error]
    [metabase.util.i18n :refer [deferred-tru]]
+   [metabase.util.json :as json]
    [metabase.util.malli :as mu]
    [ring.adapter.jetty :as jetty]
    [ring.middleware.params :refer [wrap-params]]
@@ -410,3 +411,117 @@
                                                  :raw_data      {:cols ["count"] :rows [[1000]]}}
                             :sent_at            (mt/malli=? :any)}}
                     @received-message))))))))
+
+;; ------------------------------------------------------------------------------------------------;;
+;;                                      Feishu (Lark) bot webhooks                                 ;;
+;; ------------------------------------------------------------------------------------------------;;
+
+(defn- feishu-bot-route
+  "A Feishu custom bot webhook. Like Feishu, it answers HTTP 200 with `response` (a `{code, msg}` map) whether or not
+  it accepts the message. Records the JSON body of every message it receives in `received`."
+  [received response]
+  (make-route :post "/open-apis/bot/v2/hook/test-token"
+              (fn [req]
+                (swap! received conj (:body req))
+                {:status 200
+                 :body   response})))
+
+(defn- feishu-channel-details
+  [url route]
+  {:url (str url (:path route)) :auth-method "none"})
+
+(deftest feishu-send!-checks-response-code-test
+  (mt/with-temp-env-var-value! [mb-http-channel-allowed-networks "allow-all"]
+    (let [route (feishu-bot-route (atom []) {:code 19002 :msg "params error, msg_type need"})]
+      (with-server [url [route]]
+        (testing "a Feishu bot answers a message it rejects with HTTP 200 and a non-zero code: that is a failed send"
+          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"params error, msg_type need"
+                                (channel/send! {:type    :channel/http
+                                                :details (feishu-channel-details url route)}
+                                               {:body {:msg_type "text" :content {:text "hi"}}}))))))
+    (let [route (feishu-bot-route (atom []) {:code 0 :msg "success"})]
+      (with-server [url [route]]
+        (testing "code 0 is a successful send"
+          (is (=? {:status 200}
+                  (channel/send! {:type    :channel/http
+                                  :details (feishu-channel-details url route)}
+                                 {:body {:msg_type "text" :content {:text "hi"}}}))))))
+    (with-server [url [(make-route :post "/hook" (fn [_] {:status 200 :body {:code 19002 :msg "params error"}}))]]
+      (testing "other webhooks still only look at the HTTP status"
+        (is (=? {:status 200}
+                (channel/send! {:type    :channel/http
+                                :details {:url (str url "/hook") :auth-method "none"}}
+                               {:body {:a 1}})))))))
+
+(deftest feishu-can-connect-test
+  (mt/with-temp-env-var-value! [mb-http-channel-allowed-networks "allow-all"]
+    (let [received (atom [])
+          route    (feishu-bot-route received {:code 0 :msg "success"})]
+      (with-server [url [route]]
+        (testing "testing a Feishu bot sends it a text message, which Feishu accepts"
+          (is (true? (can-connect? (feishu-channel-details url route))))
+          (is (=? [{:msg_type "text" :content {:text #".*Metabase.*"}}]
+                  @received)))))
+    (let [route (feishu-bot-route (atom []) {:code 19021 :msg "sign match fail or timestamp is not within one hour from current time"})]
+      (with-server [url [route]]
+        (testing "a Feishu bot that rejects the test message fails the connection check with its response"
+          (is (= {:request-status 200
+                  :request-body   {"code" 19021
+                                   "msg"  "sign match fail or timestamp is not within one hour from current time"}}
+                 (exception-data (can-connect? (feishu-channel-details url route))))))))))
+
+(defn- card-table
+  "The table of a received Feishu card as rows of cell text, the header row first."
+  [feishu-message]
+  (let [{:keys [columns rows]} (->> feishu-message :card :body :elements (filter #(= "table" (:tag %))) first)]
+    (cons (mapv :display_name columns)
+          (for [row rows]
+            (mapv #(get row (keyword (:name %))) columns)))))
+
+(defn- card-text
+  "The markdown text of a received Feishu card."
+  [feishu-message]
+  (->> feishu-message :card :body :elements (filter #(= "markdown" (:tag %))) (map :content) (str/join "\n")))
+
+(defn- send-card-alert-to-feishu!
+  "Sends an alert for a card with `card-props` to a Feishu bot and returns the messages the bot received."
+  [card-props]
+  (mt/with-temp-env-var-value! [mb-http-channel-allowed-networks "allow-all"]
+    (let [received (atom [])
+          route    (feishu-bot-route received {:code 0 :msg "success"})]
+      (with-server [url [route]]
+        (mt/with-temp [:model/Channel {chn-id :id} {:type    :channel/http
+                                                    :details (feishu-channel-details url route)}]
+          (notification.tu/with-card-notification
+            [notification {:card     card-props
+                           :handlers [{:channel_type :channel/http
+                                       :channel_id   chn-id}]}]
+            (notification/send-notification! (t2/select-one :model/Notification (:id notification)) :notification/sync? true)
+            (assoc (first @received) ::card-id (-> notification :payload :card_id))))))))
+
+(deftest alert-feishu-e2e-test
+  (testing "an alert to a Feishu bot is a Feishu card with the question name, its formatted results and a link"
+    (let [message (send-card-alert-to-feishu! {:name          "有消耗无订单"
+                                               :dataset_query (mt/mbql-query checkins {:aggregation [:count]})})]
+      (is (=? {:msg_type "interactive"
+               :card     {:schema "2.0"
+                          :header {:title {:content "有消耗无订单"}}}}
+              message))
+      (testing "cells are formatted the way Metabase shows them, not raw values"
+        (is (= [["Count"] ["1,000"]]
+               (card-table message))))
+      (is (=? [{:tag       "button"
+                :behaviors [{:type        "open_url"
+                             :default_url (mt/malli=? [:fn #(str/ends-with? % (str "/question/" (::card-id message)))])}]}]
+              (->> message :card :body :elements (filter #(= "button" (:tag %)))))))))
+
+(deftest alert-feishu-size-limit-test
+  (testing "a large result is cut down to fit Feishu's 20 KB request limit, and the card says how many rows there are"
+    (let [message (send-card-alert-to-feishu!
+                   {:dataset_query (mt/native-query {:query "SELECT X AS N, REPEAT('有消耗无订单', 100) AS LONG_TEXT FROM SYSTEM_RANGE(1, 30)"})})
+          body    (json/encode (dissoc message ::card-id))
+          [_header & rows] (card-table message)]
+      (is (<= (count (.getBytes ^String body "UTF-8")) 20000))
+      (is (< 0 (count rows) 30))
+      (is (= "1" (ffirst rows)) "the first rows are the ones kept")
+      (is (str/includes? (card-text message) "30")))))
