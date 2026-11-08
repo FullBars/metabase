@@ -31,6 +31,8 @@
    (org.apache.batik.parser AWTPathProducer)
    (org.apache.pdfbox.pdmodel PDDocument PDPage PDPageContentStream)
    (org.apache.pdfbox.pdmodel.common PDRectangle)
+   (org.apache.pdfbox.pdmodel.graphics.form PDFormXObject)
+   (org.apache.pdfbox.pdmodel.graphics.image PDImageXObject)
    (org.apache.pdfbox.pdmodel.interactive.action PDActionURI)
    (org.apache.pdfbox.pdmodel.interactive.annotation PDAnnotationLink)))
 
@@ -922,6 +924,66 @@
         (is (contains? @#'pdf/table-like-chart-types
                        (render.card/detect-pulse-chart-type {:display display} nil data))
             (format "display %s should route through the framed table path" display))))))
+
+;; not ^:parallel: exercises the real static-viz + PDFBox rendering path
+(deftest ^:synchronized chart-drawn-as-vectors-test
+  (testing "a rectangular chart is drawn as vector graphics filling its cell, not as a raster image, so it stays
+            sharp at any zoom and in viewers that resample embedded images"
+    (let [data {:cols [{:name "x" :display_name "X" :base_type :type/Integer}
+                       {:name "y" :display_name "Y" :base_type :type/Integer}]
+                :rows [[1 10] [2 20] [3 15]]}
+          part {:card     {:display                "bar"
+                           :name                   "订单"
+                           :visualization_settings {:graph.dimensions ["x"]
+                                                    :graph.metrics    ["y"]}}
+                :dashcard nil
+                :result   {:data data}}]
+      (with-open [doc (PDDocument.)]
+        (binding [font/*fonts* (#'font/load-fonts! doc)]
+          (let [page (PDPage. PDRectangle/A4)]
+            (.addPage doc page)
+            (with-open [cs (PDPageContentStream. doc page)]
+              (#'pdf/render-card-cell! doc cs nil part 36.0 760.0 480.0 300.0))
+            (let [res      (.getResources page)
+                  xobjects (map #(.getXObject res %) (.getXObjectNames res))
+                  forms    (filter #(instance? PDFormXObject %) xobjects)]
+              (is (not-any? #(instance? PDImageXObject %) xobjects)
+                  "no raster image on the page")
+              (is (= 1 (count forms))
+                  "the chart is one vector form XObject")
+              (when-let [^PDFormXObject form (first forms)]
+                (testing "the form spans the full cell width"
+                  (is (< 479.0 (.getWidth (.getBBox form)) 481.0)))
+                (testing "the form actually paints (paths for bars, axes and label glyphs)"
+                  (is (< 1000 (count (.toByteArray (.getContentStream form))))))))))))))
+
+;; not ^:parallel: exercises the real CSSBox + PDFBox rendering path
+(deftest ^:synchronized table-drawn-as-vectors-test
+  (testing "a table card is drawn as vector graphics (text glyphs and rules), not as a raster image"
+    (let [data {:cols [{:name "d" :display_name "日期" :base_type :type/Text}
+                       {:name "n" :display_name "有效订单" :base_type :type/Integer}]
+                :rows (mapv (fn [i] [(str "十月 " i " 日") i]) (range 1 40))}
+          part {:card     {:display "table" :name "订单明细"}
+                :dashcard nil
+                :result   {:data data}}]
+      (with-open [doc (PDDocument.)]
+        (binding [font/*fonts* (#'font/load-fonts! doc)]
+          (let [page (PDPage. PDRectangle/A4)]
+            (.addPage doc page)
+            (with-open [cs (PDPageContentStream. doc page)]
+              (#'pdf/render-card-cell! doc cs nil part 36.0 760.0 480.0 300.0))
+            (let [res      (.getResources page)
+                  xobjects (map #(.getXObject res %) (.getXObjectNames res))
+                  forms    (filter #(instance? PDFormXObject %) xobjects)]
+              (is (not-any? #(instance? PDImageXObject %) xobjects)
+                  "no raster image on the page")
+              (is (= 1 (count forms))
+                  "the table is one vector form XObject")
+              (when-let [^PDFormXObject form (first forms)]
+                (let [bbox (.getBBox form)]
+                  (testing "it fills the cell width and is clipped to the cell height (39 rows don't fit)"
+                    (is (< 478.0 (.getWidth bbox) 481.0))
+                    (is (< 100.0 (.getHeight bbox) 300.0))))))))))))
 
 ;; not ^:parallel: exercises the real CSSBox/PDFBox rendering path (font loading + the no-results HTML->PNG asset)
 (deftest ^:synchronized no-results-card-render-test

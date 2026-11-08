@@ -17,6 +17,7 @@
    (java.io ByteArrayInputStream ByteArrayOutputStream)
    (java.nio.charset StandardCharsets)
    (org.apache.batik.anim.dom SAXSVGDocumentFactory SVGOMDocument)
+   (org.apache.batik.bridge BridgeContext GVTBuilder UserAgentAdapter)
    (org.apache.batik.transcoder TranscoderInput TranscoderOutput)
    (org.apache.batik.transcoder.image PNGTranscoder)
    (org.w3c.dom Element Node)))
@@ -163,6 +164,21 @@
   "Convert a string (from svg rendering) an svg document then return the bytes"
   [s]
   (-> s parse-svg-string render-svg))
+
+(defn svg-string->graphics-node
+  "Build Batik's renderable tree for the SVG string `s`, for painting it as vectors onto any `Graphics2D` (e.g. a PDF
+  page) instead of rasterizing it. Applies the same fixes as the PNG path. Returns `{:node GraphicsNode, :width w,
+  :height h}`, the size being the SVG's own, in user units."
+  [s]
+  (style/register-fonts-if-needed!)
+  (let [doc  (post-process (parse-svg-string s) fix-fill clear-style-node)
+        ctx  (doto (BridgeContext. (UserAgentAdapter.))
+               (.setDynamicState BridgeContext/STATIC))
+        node (.build (GVTBuilder.) ctx ^SVGOMDocument doc)
+        size (.getDocumentSize ctx)]
+    {:node   node
+     :width  (.getWidth size)
+     :height (.getHeight size)}))
 
 (defn funnel
   "Clojure entrypoint to render a funnel chart. Data should be vec of [[Step Measure]] where Step is

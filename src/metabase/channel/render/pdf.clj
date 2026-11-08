@@ -62,16 +62,20 @@
    [metabase.util.memoize :as memo]
    [toucan2.core :as t2])
   (:import
+   (de.rototor.pdfbox.graphics2d PdfBoxGraphics2D)
    (java.awt Color)
-   (java.awt.geom AffineTransform PathIterator)
+   (java.awt.geom AffineTransform PathIterator Rectangle2D$Double)
    (java.io ByteArrayOutputStream StringReader)
+   (org.apache.batik.gvt GraphicsNode)
    (org.apache.batik.parser AWTPathProducer)
    (org.apache.pdfbox.pdmodel PDDocument PDPage PDPageContentStream)
    (org.apache.pdfbox.pdmodel.common PDRectangle)
    (org.apache.pdfbox.pdmodel.font PDFont)
+   (org.apache.pdfbox.pdmodel.graphics.form PDFormXObject)
    (org.apache.pdfbox.pdmodel.graphics.image PDImageXObject)
    (org.apache.pdfbox.pdmodel.interactive.action PDActionURI)
-   (org.apache.pdfbox.pdmodel.interactive.annotation PDAnnotationLink PDBorderStyleDictionary)))
+   (org.apache.pdfbox.pdmodel.interactive.annotation PDAnnotationLink PDBorderStyleDictionary)
+   (org.apache.pdfbox.util Matrix)))
 
 (set! *warn-on-reflection* true)
 
@@ -636,23 +640,58 @@
               :data data})
        (m/distinct-by #(get-in % [:card :id]))))
 
-(defn- sized-chart-png
-  "Render an isomorphic chart to a PNG, telling static-viz to lay the chart out into a `w-px` x `h-px` logical box
-  (so it fills it the way the frontend does), rasterized at [[common/chart-supersample]] times that pixel size for crispness.
+(defn- sized-chart-svg
+  "Render an isomorphic chart to an SVG string, telling static-viz to lay the chart out into a `w-px` x `h-px` logical
+  box (so it fills it the way the frontend does).
 
   Used for rectangular charts and for square/wide pies (which then place their legend to the side).
 
   Returns nil if the chart doesn't produce an SVG."
-  ^bytes [card dashcard data w-px h-px]
+  [card dashcard data w-px h-px]
   (binding [js.svg/*chart-size* {:width       w-px
                                  :height      h-px
-                                 :scale       common/chart-supersample
                                  :fit-within? true}]
     (let [viz                    (or (:visualization_settings dashcard)
                                      (:visualization_settings card))
           {:keys [content type]} (js.svg/*javascript-visualization* (cards-with-data card dashcard data) viz)]
       (when (= :svg type)
-        (js.svg/svg-string->bytes content)))))
+        content))))
+
+(defn- svg->form
+  "Paint `svg` as vector graphics into a new `w` x `h` point form XObject, stretched to fill it the way the raster
+  used to be."
+  ^PDFormXObject [^PDDocument doc ^String svg w h]
+  (let [{:keys [^GraphicsNode node width height]} (js.svg/svg-string->graphics-node svg)
+        g (PdfBoxGraphics2D. doc (float w) (float h))]
+    (try
+      (when-let [^Color bg js.svg/*svg-background-color*]
+        (.setColor g bg)
+        (.fill g (Rectangle2D$Double. 0.0 0.0 (double w) (double h))))
+      (.scale g (/ (double w) width) (/ (double h) height))
+      (.paint node g)
+      (finally
+        (.dispose g)))
+    (.getXFormObject g)))
+
+(defn- draw-svg!
+  "Draw `svg` into the `w` x `h` point box whose bottom-left corner is (`x`, `y`), as vectors: they stay sharp at any
+  zoom and in viewers (e.g. Feishu's) that resample embedded images. Falls back to the
+  [[common/chart-supersample]]d raster if Batik can't paint it."
+  [^PDDocument doc ^PDPageContentStream cs ^String svg x y w h]
+  (if-let [form (try
+                  (svg->form doc svg w h)
+                  (catch Exception e
+                    (log/warn e "Could not draw chart as vectors; falling back to a raster")
+                    nil))]
+    (do (.saveGraphicsState cs)
+        (.transform cs (Matrix/getTranslateInstance (float x) (float y)))
+        (.drawForm cs form)
+        (.restoreGraphicsState cs))
+    (binding [js.svg/*chart-size* {:width  (pt->px w)
+                                   :height (pt->px h)
+                                   :scale  common/chart-supersample}]
+      (.drawImage cs (PDImageXObject/createFromByteArray doc (js.svg/svg-string->bytes svg) "chart")
+                  (float x) (float y) (float w) (float h)))))
 
 (defn- param-entries
   "Name/value strings for each parameter carrying a non-blank formatted value (via `value-string`,
@@ -940,9 +979,9 @@
     :pivot
     chart-type))
 
-(defn- table-body-png
-  "Render a table-like card body (`:table`, `:pivot`, or `:object`) to PNG bytes sized to the `px-w` x `px-h`
-  cell (logical pixels), supersampled at [[table-supersample]]x. The body is a `width:100%` table inside a
+(defn- table-body-info
+  "Render info for a table-like card body (`:table`, `:pivot`, or `:object`) sized to the `px-w` x `px-h` cell
+  (logical pixels), drawn by [[table-body-form]] or [[table-body-png]]. The body is a `width:100%` table inside a
   fixed-`px-w` clip box, so -- like the dashboard -- its columns stretch to fill when the content is narrower
   than the cell, and a wider table (e.g. a many-column pivot) overflows and is clipped at the cell edge. (The
   card frame itself is stroked around the full cell in [[draw-table-card!]], not around this content.)
@@ -950,7 +989,7 @@
   A pinned footer (see [[card-footer]]) is kept visible below the (possibly height-clipped) body: the native
   `:table` gets a row-count footer, and object-detail keeps its \"Showing 1 of N\" note (pulled out of the
   clipped body so a short card can't hide it). A pivot has neither."
-  ^bytes [timezone {:keys [card dashcard result]} chart-type px-w px-h]
+  [timezone {:keys [card dashcard result]} chart-type px-w px-h]
   (let [;; Render directly, not via render-pulse-card: its <p>/.pulse-body margins escape CSSBox's
         ;; height clip and push the image past the cell. body/render gives the bare table. Opt out of the email/Slack
         ;; fixed-width fallback for wrapping columns: CSSBox lays the table out at `px-w` and auto-wraps, so a fixed
@@ -968,7 +1007,13 @@
         content  [:div
                   [:div {:style clip-css} (restyle-table body (= :table body-type))]
                   footer]]
-    (png/render-html-to-png (assoc info :content content) px-w {:channel.render/scale table-supersample})))
+    (assoc info :content content)))
+
+(defn- table-body-png
+  "[[table-body-info]] rasterized to PNG bytes, supersampled at [[table-supersample]]x."
+  ^bytes [timezone part chart-type px-w px-h]
+  (png/render-html-to-png (table-body-info timezone part chart-type px-w px-h) px-w
+                          {:channel.render/scale table-supersample}))
 
 (defn- move-to! [^PDPageContentStream cs x y] (.moveTo cs (float x) (float y)))
 (defn- line-to! [^PDPageContentStream cs x y] (.lineTo cs (float x) (float y)))
@@ -1031,6 +1076,18 @@
   ^double [px]
   (px->pt (/ (double px) table-supersample)))
 
+(defn- table-body-form
+  "[[table-body-info]] painted as vector graphics into a form XObject the size of its content, in points. Vectors
+  stay sharp at any zoom and in viewers (e.g. Feishu's) that resample embedded images."
+  ^PDFormXObject [^PDDocument doc timezone part chart-type px-w px-h]
+  (let [^PdfBoxGraphics2D g (png/render-html-to-graphics!
+                             (table-body-info timezone part chart-type px-w px-h) px-w
+                             (fn [w h]
+                               (doto (PdfBoxGraphics2D. doc (float (px->pt w)) (float (px->pt h)))
+                                 (.scale (px->pt 1) (px->pt 1)))))]
+    (.dispose g)
+    (.getXFormObject g)))
+
 (defn- draw-table-card!
   "Draw a table-like card body (`:table`, `:pivot`, or `:object`) into its `[x, body-top]` x `cell-w` x
   `body-h` cell. The content image is drawn top-left at its natural size (filled or hugged per type, and
@@ -1038,16 +1095,26 @@
   card border on the dashboard -- so the border wraps the whole dashcard rather than shrink-wrapping the
   content."
   [^PDDocument doc ^PDPageContentStream cs timezone chart-type part x body-top cell-w body-h]
-  (let [img (PDImageXObject/createFromByteArray
-             doc (table-body-png timezone part chart-type (pt->px cell-w) (pt->px body-h)) "table")
-        ;; image is at table-supersample x logical pixels -> divide back to points
-        dw  (supersampled-px->pt (.getWidth img))
-        dh  (supersampled-px->pt (.getHeight img))]
-    ;; clip the rectangular image to the frame's rounded rect so its square corners can't spill past the arc
+  (let [px-w (pt->px cell-w)
+        px-h (pt->px body-h)
+        form (try
+               (table-body-form doc timezone part chart-type px-w px-h)
+               (catch Exception e
+                 (log/warn e "Could not draw table as vectors; falling back to a raster")
+                 nil))]
+    ;; clip the rectangular body to the frame's rounded rect so its square corners can't spill past the arc
     (.saveGraphicsState cs)
     (round-rect-path! cs frame-corner-radius-pt x body-top cell-w body-h)
     (.clip cs)
-    (.drawImage cs img (float x) (float (- body-top dh)) (float dw) (float dh))
+    (if-let [^PDFormXObject form form]
+      (let [dh (.getHeight (.getBBox form))]
+        (.transform cs (Matrix/getTranslateInstance (float x) (float (- body-top dh))))
+        (.drawForm cs form))
+      (let [img (PDImageXObject/createFromByteArray doc (table-body-png timezone part chart-type px-w px-h) "table")
+            ;; image is at table-supersample x logical pixels -> divide back to points
+            dw  (supersampled-px->pt (.getWidth img))
+            dh  (supersampled-px->pt (.getHeight img))]
+        (.drawImage cs img (float x) (float (- body-top dh)) (float dw) (float dh))))
     (.restoreGraphicsState cs)
     (stroke-round-rect! cs table-frame-color frame-line-w-pt frame-corner-radius-pt x body-top cell-w body-h)))
 
@@ -1170,14 +1237,12 @@
           empty?
           (draw-no-results! doc cs x body-top cell-w body-h)
 
-          :let [png (when fill?
-                      (sized-chart-png card dashcard data (pt->px cell-w) (pt->px body-h)))]
+          :let [svg (when fill?
+                      (sized-chart-svg card dashcard data (pt->px cell-w) (pt->px body-h)))]
 
           ;; rectangular charts and pies: fill the body area exactly
-          png
-          (.drawImage cs (PDImageXObject/createFromByteArray doc png "chart")
-                      (float x) (float (- body-top body-h))
-                      (float cell-w) (float body-h))
+          svg
+          (draw-svg! doc cs svg x (- body-top body-h) cell-w body-h)
 
           tabular?
           (draw-table-card! doc cs timezone chart-type part x body-top cell-w body-h)
