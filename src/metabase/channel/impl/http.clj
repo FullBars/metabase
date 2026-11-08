@@ -16,6 +16,7 @@
    [metabase.util.http :as u.http]
    [metabase.util.i18n :refer [tru]]
    [metabase.util.json :as json]
+   [metabase.util.log :as log]
    [metabase.util.malli :as mu]
    [metabase.util.malli.schema :as ms]))
 
@@ -83,6 +84,35 @@
                        :status status
                        :body   body}))))
   response)
+
+(defn- feishu-open-api!
+  "POST `request` to the Feishu open platform `path` on the host of the bot's `webhook-url`, so Lark and privately
+  deployed Feishu work too, under the webhook's network policy. Returns the decoded response body; a non-zero `code`
+  throws."
+  [webhook-url path request]
+  (let [strategy (channel.settings/http-channel-allowed-networks)
+        url      (str (re-find #"^https?://[^/?#]+" webhook-url) path)]
+    (check-url! strategy url)
+    (-> (http/request (-> (merge {:method :post :accept :json} request {:url url})
+                          (u/assoc-dissoc :dns-resolver (u.http/network-policy-dns-resolver strategy))))
+        check-feishu-response!
+        :body
+        json/decode+kw)))
+
+(defn- upload-feishu-image!
+  "Upload `png` with the Feishu app in settings, returning its image key."
+  [webhook-url png]
+  (let [token (:tenant_access_token
+               (feishu-open-api! webhook-url "/open-apis/auth/v3/tenant_access_token/internal"
+                                 {:content-type :json
+                                  :body         (json/encode {:app_id     (channel.settings/feishu-app-id)
+                                                              :app_secret (channel.settings/unobfuscated-feishu-app-secret)})}))]
+    (-> (feishu-open-api! webhook-url "/open-apis/im/v1/images"
+                          {:headers   {"Authorization" (str "Bearer " token)}
+                           :multipart [{:name "image_type" :content "message"}
+                                       {:part-name "image" :name "chart.png" :mime-type "image/png" :content png}]})
+        :data
+        :image_key)))
 
 (mu/defmethod channel/send! :channel/http
   [{{:keys [url method auth-method auth-info]} :details} :- HTTPChannel
@@ -178,9 +208,28 @@
                       visible-cols
                       formatters))}))
 
+(def ^:private feishu-imageless-displays
+  "Displays whose card shows no image: the card's table already is the visualization."
+  #{:table :pivot :object})
+
+(defn- feishu-chart-image-key
+  "The image key of the chart of `card-part`, uploaded with the Feishu app in settings. Nil when no app is set up or
+  the card is a table, and when the upload fails, which is logged: the alert then goes out without the chart."
+  [webhook-url {:keys [card result]}]
+  (when (and (channel.settings/feishu-app-id)
+             (channel.settings/unobfuscated-feishu-app-secret)
+             (not (feishu-imageless-displays (keyword (:display card)))))
+    (try
+      (upload-feishu-image! webhook-url (channel.render/render-pulse-card-to-png
+                                         (channel.render/defaulted-timezone card) card result image-width))
+      (catch Exception e
+        (log/warn e "Couldn't upload the chart to Feishu; sending the alert without it")
+        nil))))
+
 (defn- feishu-alert-card
-  "A Feishu interactive card for an alert on `card` showing `shown-rows` of the result's `row-count` rows."
-  [card columns shown-rows row-count]
+  "A Feishu interactive card for an alert on `card` showing `shown-rows` of the result's `row-count` rows, under the
+  chart uploaded as `image-key` when there is one."
+  [card image-key columns shown-rows row-count]
   (let [column-key #(str "c" %)]
     {:msg_type "interactive"
      :card     {:schema "2.0"
@@ -190,6 +239,12 @@
                          :subtitle {:tag "plain_text" :content (tru "Metabase alert")}
                          :template "orange"}
                 :body   {:elements (concat
+                                    (when image-key
+                                      [{:tag        "img"
+                                        :img_key    image-key
+                                        :alt        {:tag "plain_text" :content (:name card)}
+                                        :scale_type "fit_horizontal"
+                                        :preview    true}])
                                     [{:tag     "markdown"
                                       :content (cond-> (tru "Rows: {0}" row-count)
                                                  (< (count shown-rows) row-count)
@@ -216,12 +271,14 @@
                                                    :default_url (urls/card-url (:id card))}]}])}}}))
 
 (defn- feishu-alert-message
-  "A Feishu card for an alert on `card`, with as many of the first rows of its result as fit in a Feishu request."
-  [card card-part]
+  "A Feishu card for an alert on `card`, with its chart when a Feishu app is set up, and as many of the first rows of
+  its result as fit in a Feishu request."
+  [webhook-url card card-part]
   (let [{:keys [columns rows]} (feishu-table card (-> card-part :result :data))
-        row-count              (count rows)]
+        row-count              (count rows)
+        image-key              (feishu-chart-image-key webhook-url card-part)]
     (loop [n (min feishu-max-rows row-count)]
-      (let [message (feishu-alert-card card columns (take n rows) row-count)]
+      (let [message (feishu-alert-card card image-key columns (take n rows) row-count)]
         (if (or (zero? n)
                 (<= (u/string-byte-count (json/encode message)) feishu-max-body-bytes))
           message
@@ -230,9 +287,10 @@
 (mu/defmethod channel/render-notification [:channel/http :notification/card]
   [_channel-type {:keys [payload creator]} handler]
   (let [{:keys [card notification_card card_part]} payload
-        card_part                        (channel.shared/maybe-realize-data-rows card_part)]
-    (if (feishu-bot-url? (-> handler :channel :details :url))
-      [{:body (feishu-alert-message card card_part)}]
+        card_part                        (channel.shared/maybe-realize-data-rows card_part)
+        webhook-url                      (-> handler :channel :details :url)]
+    (if (feishu-bot-url? webhook-url)
+      [{:body (feishu-alert-message webhook-url card card_part)}]
       [{:body {:type               "alert"
                ;; TODO: can we rename this???
                :alert_id           (:id notification_card)

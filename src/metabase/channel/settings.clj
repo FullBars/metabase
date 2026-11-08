@@ -26,6 +26,29 @@
   []
   (setting/get-value-of-type :string :slack-app-token))
 
+(defsetting feishu-app-id
+  (deferred-tru
+   (str "App ID of a Feishu (or Lark) app that uploads the chart image of alerts sent to Feishu group bot webhooks. "
+        "The app needs the bot feature and the im:resource permission."))
+  :encryption :no
+  :visibility :settings-manager
+  :export?    false)
+
+(defsetting feishu-app-secret
+  (deferred-tru "App secret of the Feishu app in the Feishu app ID setting.")
+  :encryption :when-encryption-key-set
+  :visibility :settings-manager
+  :sensitive? true
+  :export?    false
+  :getter     (fn []
+                (-> (setting/get-value-of-type :string :feishu-app-secret)
+                    (u.str/mask 4))))
+
+(defn unobfuscated-feishu-app-secret
+  "Get the unobfuscated value of [[feishu-app-secret]]."
+  []
+  (setting/get-value-of-type :string :feishu-app-secret))
+
 (defsetting slack-token-valid?
   (deferred-tru
    (str "Whether the current Slack app token, if set, is valid. "

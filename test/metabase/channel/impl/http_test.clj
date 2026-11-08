@@ -484,12 +484,13 @@
   (->> feishu-message :card :body :elements (filter #(= "markdown" (:tag %))) (map :content) (str/join "\n")))
 
 (defn- send-card-alert-to-feishu!
-  "Sends an alert for a card with `card-props` to a Feishu bot and returns the messages the bot received."
-  [card-props]
+  "Sends an alert for a card with `card-props` to a Feishu bot and returns the message the bot received. `extra-routes`
+  are served next to the bot, as the Feishu open platform is."
+  [card-props & {:keys [extra-routes]}]
   (mt/with-temp-env-var-value! [mb-http-channel-allowed-networks "allow-all"]
     (let [received (atom [])
           route    (feishu-bot-route received {:code 0 :msg "success"})]
-      (with-server [url [route]]
+      (with-server [url (into [route] extra-routes)]
         (mt/with-temp [:model/Channel {chn-id :id} {:type    :channel/http
                                                     :details (feishu-channel-details url route)}]
           (notification.tu/with-card-notification
@@ -498,6 +499,10 @@
                                        :channel_id   chn-id}]}]
             (notification/send-notification! (t2/select-one :model/Notification (:id notification)) :notification/sync? true)
             (assoc (first @received) ::card-id (-> notification :payload :card_id))))))))
+
+(defn- card-images
+  [feishu-message]
+  (->> feishu-message :card :body :elements (filter #(= "img" (:tag %)))))
 
 (deftest alert-feishu-e2e-test
   (testing "an alert to a Feishu bot is a Feishu card with the question name, its formatted results and a link"
@@ -510,6 +515,8 @@
       (testing "cells are formatted the way Metabase shows them, not raw values"
         (is (= [["Count"] ["1,000"]]
                (card-table message))))
+      (testing "without a Feishu app set up there is no chart image"
+        (is (empty? (card-images message))))
       (is (=? [{:tag       "button"
                 :behaviors [{:type        "open_url"
                              :default_url (mt/malli=? [:fn #(str/ends-with? % (str "/question/" (::card-id message)))])}]}]
@@ -525,3 +532,68 @@
       (is (< 0 (count rows) 30))
       (is (= "1" (ffirst rows)) "the first rows are the ones kept")
       (is (str/includes? (card-text message) "30")))))
+
+(defn- feishu-open-platform-routes
+  "The Feishu open platform endpoints an alert uses to upload a chart, recording each call in `calls`. The upload
+  answers `upload-response`."
+  [calls upload-response]
+  [(make-route :post "/open-apis/auth/v3/tenant_access_token/internal"
+               (fn [req]
+                 (swap! calls conj [:token (:body req)])
+                 {:status 200
+                  :body   {:code 0 :msg "ok" :tenant_access_token "t-test-token" :expire 7200}}))
+   (make-route :post "/open-apis/im/v1/images"
+               (fn [req]
+                 ;; read the upload like Feishu does: answering before the body is in makes Jetty reset the
+                 ;; connection mid-send, and the client then sends the upload again
+                 (let [body (slurp (:body req))]
+                   (swap! calls conj [:upload {:authorization (get-in req [:headers "authorization"])
+                                               :content-type  (get-in req [:headers "content-type"])
+                                               :image-type?   (str/includes? body "name=\"image_type\"")
+                                               :png?          (str/includes? body "PNG")}]))
+                 {:status 200
+                  :body   upload-response}))])
+
+(defn- send-card-alert-with-feishu-app!
+  "Sends an alert for a card with `card-props` to a Feishu bot with a Feishu app set up whose image uploads answer
+  `upload-response`. Returns the bot's message and the open platform calls."
+  [card-props upload-response]
+  (let [calls (atom [])]
+    (mt/with-temporary-setting-values [feishu-app-id     "cli_test"
+                                       feishu-app-secret "app-secret"]
+      (notification.tu/with-javascript-visualization-stub
+        {:message (send-card-alert-to-feishu! card-props
+                                              :extra-routes (feishu-open-platform-routes calls upload-response))
+         :calls   @calls}))))
+
+(def ^:private uploaded {:code 0 :msg "success" :data {:image_key "img_v3_test"}})
+
+(defn- chart-card []
+  {:name          "每日订单"
+   :display       :line
+   :dataset_query (mt/mbql-query checkins {:aggregation [:count] :breakout [!month.date]})})
+
+(deftest alert-feishu-chart-image-test
+  (testing "with a Feishu app set up, a chart alert's card starts with the chart, uploaded with the app's tenant token"
+    (let [{:keys [message calls]} (send-card-alert-with-feishu-app! (chart-card) uploaded)]
+      (is (=? [{:tag "img" :img_key "img_v3_test"}] (card-images message)))
+      (is (= "img" (-> message :card :body :elements first :tag)))
+      (is (=? [[:token {:app_id "cli_test" :app_secret "app-secret"}]
+               [:upload {:authorization "Bearer t-test-token" :content-type #"multipart/form-data.*"
+                         :image-type?   true            :png?         true}]]
+              calls))
+      (testing "and the table of results is still there"
+        (is (seq (rest (card-table message)))))))
+  (testing "an upload Feishu rejects still sends the alert, without the chart"
+    (let [{:keys [message]} (send-card-alert-with-feishu-app!
+                             (chart-card)
+                             {:code 99991672 :msg "Access denied. One of the following scopes is required: [im:resource]"})]
+      (is (=? {:msg_type "interactive"} message))
+      (is (empty? (card-images message)))))
+  (testing "a table alert gets no image, since the card already shows the table"
+    (let [{:keys [message calls]} (send-card-alert-with-feishu-app!
+                                   {:display       :table
+                                    :dataset_query (mt/mbql-query checkins {:aggregation [:count]})}
+                                   uploaded)]
+      (is (empty? (card-images message)))
+      (is (empty? calls)))))
