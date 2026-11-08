@@ -1020,12 +1020,48 @@
                    (tool-error (call-tool! :crowberto v2.tu/all-scopes
                                            (wire {:method "update" :id pulse-id}))))))))
 
-(deftest webhook-channel-is-a-teaching-error-test
-  (testing "a subscription whose only channel is a webhook (`:http`, a real PulseChannel type this
-            tool cannot edit) must be refused with a teaching error. `target-channel-type` derives
-            the channel from the existing one when there is exactly one, so \"http\" reaches
-            `build-channel` — whose `case` covers only email and slack and would otherwise throw a
-            bare IllegalArgumentException the agent can do nothing with."
+(def ^:private feishu-group-chat-details
+  {:url "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id&receive_id=oc_test" :auth-method "none"})
+
+(def ^:private feishu-custom-bot-details
+  {:url "https://open.feishu.cn/open-apis/bot/v2/hook/test-token" :auth-method "none"})
+
+(deftest webhook-subscription-test
+  (mt/with-model-cleanup [:model/Pulse]
+    (mt/with-temp [:model/Card          {card-id :id} {}
+                   :model/Dashboard     {dash-id :id} {:name "Sales KPIs"}
+                   :model/DashboardCard _ {:dashboard_id dash-id :card_id card-id}
+                   :model/Channel       {chat-id :id} {:name "飞书 · 经营群" :type :channel/http :active true
+                                                       :details feishu-group-chat-details}
+                   :model/Channel       _ {:name "飞书 · 群机器人" :type :channel/http :active true
+                                           :details feishu-custom-bot-details}]
+      (let [create! #(call-tool! :crowberto v2.tu/all-scopes
+                                 (wire (merge {:method "create" :dashboard_id dash-id
+                                               :schedule {:schedule_type "daily" :schedule_hour 9}
+                                               :channel "webhook"}
+                                              %)))]
+        (testing "a dashboard subscription can go to a Feishu group chat webhook, which gets the dashboard as a PDF"
+          (let [result (tool-result (create! {:webhook "飞书 · 经营群"}))]
+            (is (=? [{:channel_type :http :channel_id chat-id :schedule_type :daily :schedule_hour 9}]
+                    (pulse-channels (:id result))))
+            (testing "and a schedule-only update keeps its webhook"
+              (tool-result (call-tool! :crowberto v2.tu/all-scopes
+                                       (wire {:method "update" :id (:id result)
+                                              :schedule {:schedule_type "daily" :schedule_hour 18}})))
+              (is (=? [{:channel_type :http :channel_id chat-id :schedule_hour 18}]
+                      (pulse-channels (:id result)))))))
+        (testing "a custom bot webhook can't take a dashboard, since it can't send files"
+          (is (re-find #"group chat" (tool-error (create! {:webhook "飞书 · 群机器人"})))))
+        (testing "an unknown webhook lists the ones that can take a dashboard"
+          (let [err (tool-error (create! {:webhook "no-such-hook"}))]
+            (is (re-find #"飞书 · 经营群" err))
+            (is (not (re-find #"飞书 · 群机器人" err)))))
+        (testing "channel webhook needs webhook"
+          (is (re-find #"webhook" (tool-error (create! {})))))))))
+
+(deftest webhook-subscription-without-a-webhook-is-a-teaching-error-test
+  (testing "a webhook subscription whose stored channel names no webhook is refused with a teaching error naming
+            the argument to pass, not a bare Internal error"
     (mt/with-temp [:model/Card {card-id :id} {}
                    :model/Dashboard {dash-id :id} {}
                    :model/Pulse {pulse-id :id} {:name "Weekly" :dashboard_id dash-id
@@ -1036,11 +1072,8 @@
       (let [err (tool-error (call-tool! :crowberto v2.tu/all-scopes
                                         (wire {:method "update" :id pulse-id
                                                :schedule {:schedule_type "hourly"}})))]
-        (testing "the message names the channel and what the tool does support"
-          (is (re-find #"(?i)webhook|http" err))
-          (is (re-find #"(?i)email" err)))
-        (testing "it is a teaching error, not a leaked class name"
-          (is (not (re-find #"IllegalArgumentException|No matching clause" err))))))))
+        (is (re-find #"webhook" err))
+        (is (not (re-find #"IllegalArgumentException|No matching clause" err)))))))
 
 (deftest unmanaged-channel-type-is-quoted-test
   (testing "GHY-4544: the stored channel type reaches the refusal quoted and escaped, so it can't pose as a

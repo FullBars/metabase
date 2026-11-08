@@ -28,6 +28,11 @@
   []
   (t2/select [:model/Channel :id :name] :type :channel/http :active true {:order-by [[:name :asc]]}))
 
+(mu/defn active-webhooks
+  "The active webhook (`:channel/http`) Channels, by name."
+  []
+  (t2/select :model/Channel :type :channel/http :active true {:order-by [[:name :asc]]}))
+
 (mu/defn channel-name-exists?
   "Whether a Channel named `channel-name` exists."
   [channel-name :- :string]

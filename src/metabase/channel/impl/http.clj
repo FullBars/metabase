@@ -5,6 +5,7 @@
    [clojure.string :as str]
    [java-time.api :as t]
    [metabase.channel.core :as channel]
+   [metabase.channel.models.channel :as models.channel]
    [metabase.channel.render.core :as channel.render]
    [metabase.channel.render.table-data :as table-data]
    [metabase.channel.schema :as channel.schema]
@@ -12,6 +13,8 @@
    [metabase.channel.shared :as channel.shared]
    [metabase.channel.urls :as urls]
    [metabase.formatter.core :as formatter]
+   [metabase.parameters.shared :as shared.params]
+   [metabase.system.core :as system]
    [metabase.util :as u]
    [metabase.util.http :as u.http]
    [metabase.util.i18n :refer [tru]]
@@ -74,6 +77,12 @@
   [url]
   (boolean (some->> url (re-find #"^https?://[^/?#]+/open-apis/bot/v2/hook/"))))
 
+(defn- feishu-url?
+  "Whether `url` takes Feishu messages: a group's custom bot, or a group chat that the Feishu app sends to (see
+  [[models.channel/feishu-chat]])."
+  [url]
+  (or (feishu-bot-url? url) (some? (models.channel/feishu-chat url))))
+
 (defn- check-feishu-response!
   [{:keys [status body] :as response}]
   (let [{:strs [code msg]} (let [parsed (maybe-parse-json body)]
@@ -99,14 +108,56 @@
         :body
         json/decode+kw)))
 
+(defn- feishu-tenant-token
+  "A tenant access token of the Feishu app in settings, from the Feishu open platform next to `webhook-url`."
+  [webhook-url]
+  (when-not (and (channel.settings/feishu-app-id) (channel.settings/unobfuscated-feishu-app-secret))
+    (throw (ex-info (tru "Set up a Feishu app (MB_FEISHU_APP_ID and MB_FEISHU_APP_SECRET) to send to a Feishu group chat.")
+                    {:status-code 400})))
+  (:tenant_access_token
+   (feishu-open-api! webhook-url "/open-apis/auth/v3/tenant_access_token/internal"
+                     {:content-type :json
+                      :body         (json/encode {:app_id     (channel.settings/feishu-app-id)
+                                                  :app_secret (channel.settings/unobfuscated-feishu-app-secret)})})))
+
+(defn- upload-feishu-file!
+  "Upload the PDF `content` as `file-name` with the Feishu app, returning its file key."
+  [webhook-url token file-name content]
+  (-> (feishu-open-api! webhook-url "/open-apis/im/v1/files"
+                        {:headers   {"Authorization" (str "Bearer " token)}
+                         :multipart [{:name "file_type" :content "pdf"}
+                                     {:name "file_name" :content file-name}
+                                     {:part-name "file" :name "dashboard.pdf" :mime-type "application/pdf" :content content}]})
+      :data
+      :file_key))
+
+(defn- send-feishu-app-message!
+  "Send `request` to the Feishu group chat of `url` as the Feishu app. Its `:body` is a Feishu message, an interactive
+  card `{:msg_type \"interactive\" :card ...}` or `{:msg_type ... :content ...}`; a `:feishu/file` request,
+  `{:file-name ... :content <PDF bytes>}`, uploads the file and sends it as a file message."
+  [url {:keys [body] file :feishu/file}]
+  (let [{:keys [receive-id receive-id-type]} (models.channel/feishu-chat url)
+        token                                (feishu-tenant-token url)
+        [msg-type content]                   (cond
+                                               file
+                                               ["file" {:file_key (upload-feishu-file! url token (:file-name file) (:content file))}]
+
+                                               (= "interactive" (:msg_type body))
+                                               ["interactive" (:card body)]
+
+                                               :else
+                                               [(:msg_type body) (:content body)])]
+    (feishu-open-api! url (str "/open-apis/im/v1/messages?receive_id_type=" receive-id-type)
+                      {:headers      {"Authorization" (str "Bearer " token)}
+                       :content-type :json
+                       :body         (json/encode {:receive_id receive-id
+                                                   :msg_type   msg-type
+                                                   :content    (json/encode content)})})))
+
 (defn- upload-feishu-image!
   "Upload `png` with the Feishu app in settings, returning its image key."
   [webhook-url png]
-  (let [token (:tenant_access_token
-               (feishu-open-api! webhook-url "/open-apis/auth/v3/tenant_access_token/internal"
-                                 {:content-type :json
-                                  :body         (json/encode {:app_id     (channel.settings/feishu-app-id)
-                                                              :app_secret (channel.settings/unobfuscated-feishu-app-secret)})}))]
+  (let [token (feishu-tenant-token webhook-url)]
     (-> (feishu-open-api! webhook-url "/open-apis/im/v1/images"
                           {:headers   {"Authorization" (str "Bearer " token)}
                            :multipart [{:name "image_type" :content "message"}
@@ -120,32 +171,34 @@
   (let [strategy (channel.settings/http-channel-allowed-networks)
         resolver (u.http/network-policy-dns-resolver strategy)]
     (check-url! strategy url)
-    (let [req (-> (merge
-                   {:accept       :json
-                    :content-type :json
-                    :method       :post}
-                   (when method
-                     {:method (keyword method)})
-                   (cond-> request
-                     (= "request-body" auth-method) (update :body merge auth-info)
-                     (= "header" auth-method)       (update :headers merge auth-info)
-                     (= "query-param" auth-method)  (update :query-params merge auth-info)))
-                  (assoc :url url)
-                  ;; Remove an incoming resolver under :allow-all; rendered requests must not control
-                  ;; DNS resolution.
-                  (u/assoc-dissoc :dns-resolver resolver))]
-      (cond-> (http/request (cond-> req
-                              (or (map? (:body req))
-                                  (sequential? (:body req))) (update :body json/encode)))
-        (feishu-bot-url? url) check-feishu-response!))))
+    (if (models.channel/feishu-chat url)
+      (send-feishu-app-message! url request)
+      (let [req (-> (merge
+                     {:accept       :json
+                      :content-type :json
+                      :method       :post}
+                     (when method
+                       {:method (keyword method)})
+                     (cond-> request
+                       (= "request-body" auth-method) (update :body merge auth-info)
+                       (= "header" auth-method)       (update :headers merge auth-info)
+                       (= "query-param" auth-method)  (update :query-params merge auth-info)))
+                    (assoc :url url)
+                    ;; Remove an incoming resolver under :allow-all; rendered requests must not control
+                    ;; DNS resolution.
+                    (u/assoc-dissoc :dns-resolver resolver))]
+        (cond-> (http/request (cond-> req
+                                (or (map? (:body req))
+                                    (sequential? (:body req))) (update :body json/encode)))
+          (feishu-bot-url? url) check-feishu-response!)))))
 
 (defmethod channel/can-connect? :channel/http
   [_channel-type details]
   (channel.shared/validate-channel-details ::channel.schema/http-details details)
   (try
     (channel/send! {:type :channel/http :details details}
-                   (if (feishu-bot-url? (:url details))
-                     ;; a Feishu bot rejects anything but one of its messages
+                   (if (feishu-url? (:url details))
+                     ;; Feishu rejects anything but one of its messages
                      {:body {:msg_type "text"
                              :content  {:text (tru "Metabase can send to this Feishu bot. This is a test message.")}}}
                      {}))
@@ -289,7 +342,7 @@
   (let [{:keys [card notification_card card_part]} payload
         card_part                        (channel.shared/maybe-realize-data-rows card_part)
         webhook-url                      (-> handler :channel :details :url)]
-    (if (feishu-bot-url? webhook-url)
+    (if (feishu-url? webhook-url)
       [{:body (feishu-alert-message webhook-url card card_part)}]
       [{:body {:type               "alert"
                ;; TODO: can we rename this???
@@ -305,3 +358,49 @@
                                                       (channel.render/defaulted-timezone card) card dashcard result image-width))
                                     :raw_data      (qp-result->raw-data (:result card_part))}
                :sent_at            (t/offset-date-time)}}])))
+
+;; ------------------------------------------------------------------------------------------------;;
+;;                                    Dashboard Subscriptions                                      ;;
+;; ------------------------------------------------------------------------------------------------;;
+
+(defn- feishu-dashboard-card
+  "The Feishu card that comes before a dashboard's PDF: the dashboard's name, its filter values, and a button that opens
+  it. `pdf?` says whether the PDF follows."
+  [dashboard parameters pdf?]
+  (let [filters (for [p parameters
+                      :let [v (some-> (shared.params/value-string p (system/site-locale)) str str/trim)]
+                      :when (not (str/blank? v))]
+                  (str (:name p) ": " v))]
+    {:msg_type "interactive"
+     :card     {:schema "2.0"
+                :config {:update_multi true
+                         :summary      {:content (tru "Metabase dashboard subscription: {0}" (:name dashboard))}}
+                :header {:title    {:tag "plain_text" :content (:name dashboard)}
+                         :subtitle {:tag "plain_text" :content (tru "Metabase dashboard subscription")}
+                         :template "blue"}
+                :body   {:elements [{:tag     "markdown"
+                                     :content (cond-> (if pdf?
+                                                        (tru "The dashboard is in the PDF below.")
+                                                        (tru "Metabase could not make a PDF of the dashboard this time. Open it in Metabase instead."))
+                                                (seq filters) (str "\n" (tru "Filters: {0}" (str/join "; " filters))))}
+                                    {:tag       "button"
+                                     :type      "primary"
+                                     :text      {:tag "plain_text" :content (tru "View in Metabase")}
+                                     :behaviors [{:type        "open_url"
+                                                  :default_url (urls/dashboard-url (:id dashboard) parameters)}]}]}}}))
+
+(mu/defmethod channel/render-notification [:channel/http :notification/dashboard]
+  [_channel-type {:keys [payload creator_id]} handler]
+  (let [webhook-url                                    (-> handler :channel :details :url)
+        {:keys [dashboard dashboard_parts parameters]} payload]
+    (when-not (models.channel/feishu-chat webhook-url)
+      (throw (ex-info (tru "Only a Feishu group chat webhook can receive a dashboard subscription, which it gets as a PDF.")
+                      {:dashboard-id (:id dashboard)})))
+    (let [pdf (try
+                (channel.render/render-dashboard-to-pdf (:id dashboard) creator_id (vec parameters) :a4 dashboard_parts)
+                (catch Throwable e
+                  (log/error e "Couldn't render the dashboard subscription PDF; sending the card without it")
+                  nil))]
+      (cond-> [{:body (feishu-dashboard-card dashboard parameters (some? pdf))}]
+        pdf (conj {:feishu/file {:file-name (str (or (some-> (:name dashboard) str/trim not-empty) "dashboard") ".pdf")
+                                 :content   pdf}})))))

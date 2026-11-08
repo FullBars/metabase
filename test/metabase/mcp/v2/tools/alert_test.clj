@@ -4,6 +4,7 @@
    gating, nil-arg stripping, Malli validation, and teaching-error conversion are exercised for
    free."
   (:require
+   [clj-http.client :as http]
    [clojure.set :as set]
    [clojure.string :as str]
    [clojure.test :refer :all]
@@ -484,6 +485,27 @@
                          (tool-error (create-webhook-call! :crowberto v2.tu/all-scopes
                                                            (wire {:name "signed bot" :url (str url (:path rejecting))})))))
             (is (not (t2/exists? :model/Channel :name "signed bot")))))))))
+
+(deftest create-webhook-for-feishu-group-chat-test
+  (mt/with-temp-env-var-value! [mb-http-channel-allowed-networks "allow-all"]
+    (mt/with-model-cleanup [:model/Channel]
+      (testing "create_webhook takes a Feishu group chat id; the app sends the chat the test message"
+        (mt/with-temporary-setting-values [feishu-app-id "cli_test" feishu-app-secret "app-secret"]
+          (let [requests (atom [])]
+            (binding [http/request (fn [req]
+                                     (swap! requests conj (:url req))
+                                     {:status 200
+                                      :body   (json/encode {:code 0 :msg "ok" :tenant_access_token "t-test" :data {}})})]
+              (let [result (tool-result (create-webhook-call! :crowberto v2.tu/all-scopes
+                                                              (wire {:name "飞书 · 经营群" :feishu_chat_id "oc_abc"})))]
+                (is (= "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id&receive_id=oc_abc"
+                       (get-in (t2/select-one :model/Channel (:id result)) [:details :url])))
+                (is (= ["https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
+                        "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id"]
+                       (filter #(str/includes? (str %) "open.feishu.cn") @requests))))))))
+      (testing "it needs a url or a feishu_chat_id"
+        (is (re-find #"feishu_chat_id"
+                     (tool-error (create-webhook-call! :crowberto v2.tu/all-scopes (wire {:name "no address"})))))))))
 
 ;;; ------------------------------------------------- update -------------------------------------------------------
 

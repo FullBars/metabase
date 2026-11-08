@@ -1,5 +1,7 @@
 (ns metabase.metabot.tools.create-alert-test
   (:require
+   [clj-http.client :as http]
+   [clojure.string :as str]
    [clojure.test :refer :all]
    [metabase.channel.impl.http-test :as http-test]
    [metabase.channel.settings :as channel.settings]
@@ -7,6 +9,7 @@
     :as metabot.tools.create-alert]
    [metabase.metabot.tools.shared :as shared]
    [metabase.test :as mt]
+   [metabase.util.json :as json]
    [toucan2.core :as t2]))
 
 (defn- alert-data [card-id]
@@ -179,3 +182,21 @@
               (is (re-find #"sign match fail"
                            (:output (create! :crowberto {:name "signed bot" :url (str url (:path rejecting))}))))
               (is (not (t2/exists? :model/Channel :name "signed bot"))))))))))
+
+(deftest create-webhook-tool-feishu-group-chat-test
+  (testing "Metabot adds a Feishu group chat by its chat id; the app sends the chat the test message"
+    (mt/with-temp-env-var-value! [mb-http-channel-allowed-networks "allow-all"]
+      (mt/with-model-cleanup [:model/Channel]
+        (mt/with-temporary-setting-values [feishu-app-id "cli_test" feishu-app-secret "app-secret"]
+          (let [requests (atom [])]
+            (binding [http/request (fn [req]
+                                     (swap! requests conj (:url req))
+                                     {:status 200
+                                      :body   (json/encode {:code 0 :msg "ok" :tenant_access_token "t-test" :data {}})})]
+              (mt/with-current-user (mt/user->id :crowberto)
+                (is (re-find #"飞书 · 经营群"
+                             (:output (metabot.tools.create-alert/create-webhook-tool
+                                       {:name "飞书 · 经营群" :feishu_chat_id "oc_abc"})))))
+              (is (= "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id&receive_id=oc_abc"
+                     (t2/select-one-fn (comp :url :details) :model/Channel :name "飞书 · 经营群")))
+              (is (some #(str/includes? (str %) "/open-apis/im/v1/messages") @requests)))))))))

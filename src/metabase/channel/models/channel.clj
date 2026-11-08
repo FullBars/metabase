@@ -136,17 +136,52 @@
         (when (string? name-or-id)
           (some #(when (= (norm name-or-id) (norm (:name %))) %) webhooks)))))
 
+(defn feishu-chat
+  "The receiver of a Feishu group chat webhook, `{:receive-id \"oc_...\" :receive-id-type \"chat_id\"}`, or nil when
+  `url` isn't one. Such a webhook is the Feishu app's send message endpoint for a chat,
+  https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id&receive_id=oc_..., and Metabase sends to it
+  as the app in the Feishu app settings, which, unlike a group's custom bot, can send files."
+  [url]
+  (when-let [[_ query] (some->> url (re-find #"^https?://[^/?#]+/open-apis/im/v1/messages\?([^#]*)"))]
+    (let [params (into {}
+                       (keep #(let [[k v] (str/split % #"=" 2)] (when v [k v])))
+                       (str/split query #"&"))]
+      (when-let [receive-id (not-empty (get params "receive_id"))]
+        {:receive-id      receive-id
+         :receive-id-type (get params "receive_id_type" "chat_id")}))))
+
+(defn feishu-chat-webhook-url
+  "The webhook URL of the Feishu group chat with id `chat-id`."
+  [chat-id]
+  (str "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id&receive_id=" chat-id))
+
+(defn active-dashboard-webhooks
+  "The `:id` and `:name` of every active webhook that can receive a dashboard subscription: a Feishu group chat, which
+  gets the dashboard as a PDF. A custom bot can't send files."
+  []
+  (into []
+        (comp (filter #(feishu-chat (get-in % [:details :url])))
+              (map #(select-keys % [:id :name])))
+        (channel.db/active-webhooks)))
+
+(defn receives-dashboards?
+  "Whether the webhook channel with id `channel-id` can receive a dashboard subscription. See
+  [[active-dashboard-webhooks]]."
+  [channel-id]
+  (boolean (some-> (channel.db/channel channel-id) :details :url feishu-chat)))
+
 (defn create-webhook!
-  "Create an active webhook channel named `webhook-name` that posts to `url` without authentication, as the current
-  user: what the admin Webhooks form does, for agents. Like the REST API it needs the setting permission and a name no
+  "Create an active webhook channel named `webhook-name` that posts to `url` without authentication, or to the Feishu
+  group chat `feishu-chat-id`, as the current user: what the admin Webhooks form does, for agents. Like the REST API it needs the setting permission and a name no
   channel has. It runs the form's connection test first, so a URL that doesn't answer, or a Feishu bot that rejects
   the message, is never saved; a Feishu bot gets a test message in its group. Returns the channel's `:id` and `:name`."
-  [{webhook-name :name :keys [url description]}]
+  [{webhook-name :name :keys [url feishu-chat-id description]}]
   (perms/check-has-application-permission :setting)
   (when (channel.db/channel-name-exists? webhook-name)
     (throw (ex-info (tru "A channel named {0} already exists." webhook-name)
                     {:status-code 409})))
-  (let [details {:url url :auth-method "none" :fe-form-type "none" :method "post"}]
+  (let [url     (or url (some-> feishu-chat-id feishu-chat-webhook-url))
+        details {:url url :auth-method "none" :fe-form-type "none" :method "post"}]
     (channel/can-connect? :channel/http details)
     (let [created (channel.db/insert-channel! (cond-> {:name    webhook-name
                                                        :type    :channel/http

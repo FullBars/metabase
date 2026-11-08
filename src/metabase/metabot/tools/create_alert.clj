@@ -104,7 +104,8 @@
 (def ^:private webhook-schema
   [:map {:closed true}
    [:name [:string {:min 1}]]
-   [:url [:string {:min 1}]]
+   [:url {:optional true} [:maybe [:string {:min 1}]]]
+   [:feishu_chat_id {:optional true} [:maybe [:string {:min 1}]]]
    [:description {:optional true} [:maybe :string]]])
 
 (mu/defn ^{:tool-name "create_webhook"
@@ -115,13 +116,21 @@
   (https://open.feishu.cn/open-apis/bot/v2/hook/...).
 
   `name` is how the webhook shows in Metabase and what you then pass as create_alert's `webhook`; it must not be
-  taken. `url` is the webhook URL. `description` is an optional note.
+  taken. `url` is the webhook URL. Instead of `url`, `feishu_chat_id` (oc_...) adds a Feishu group chat the Feishu
+  app is in: Metabase sends there as the app, which can also send files, so the chat can receive dashboard
+  subscriptions as PDFs (create_dashboard_subscription with `webhook`). `description` is an optional note.
 
   Metabase first sends the webhook a test message (a Feishu bot posts it in its group) and saves the webhook only
   when that works. Adding a webhook needs the user to be allowed to manage Metabase settings."
-  [{webhook-name :name :keys [url description]} :- webhook-schema]
+  [{webhook-name :name :keys [url feishu_chat_id description]} :- webhook-schema]
   (try
-    (let [{:keys [id]} (models.channel/create-webhook! {:name webhook-name :url url :description description})]
+    (when-not (or url feishu_chat_id)
+      (throw (ex-info "Pass the webhook's url, or feishu_chat_id for a Feishu group chat the Feishu app is in."
+                      {:status-code 400})))
+    (let [{:keys [id]} (models.channel/create-webhook! {:name           webhook-name
+                                                        :url            url
+                                                        :feishu-chat-id feishu_chat_id
+                                                        :description    description})]
       {:output (str "Webhook \"" webhook-name "\" (id " id ") created, and Metabase's test message reached it. "
                     "Pass webhook \"" webhook-name "\" to create_alert to deliver alerts there.")})
     (catch clojure.lang.ExceptionInfo e

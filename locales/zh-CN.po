@@ -46286,3 +46286,31 @@ msgstr "在 Metabase 中查看"
 #: metabase/channel/models/channel.clj
 msgid "A channel named {0} already exists."
 msgstr "已经有名为 {0} 的渠道了。"
+
+#: metabase/channel/impl/http.clj
+msgid "Set up a Feishu app (MB_FEISHU_APP_ID and MB_FEISHU_APP_SECRET) to send to a Feishu group chat."
+msgstr "要发到飞书群，请先配置飞书应用（MB_FEISHU_APP_ID 和 MB_FEISHU_APP_SECRET）。"
+
+#: metabase/channel/impl/http.clj
+msgid "Only a Feishu group chat webhook can receive a dashboard subscription, which it gets as a PDF."
+msgstr "只有飞书群（由飞书应用发送）的 Webhook 能接收仪表板订阅，仪表板会以 PDF 发送。"
+
+#: metabase/channel/impl/http.clj
+msgid "Metabase dashboard subscription: {0}"
+msgstr "Metabase 仪表板订阅：{0}"
+
+#: metabase/channel/impl/http.clj
+msgid "Metabase dashboard subscription"
+msgstr "Metabase 仪表板订阅"
+
+#: metabase/channel/impl/http.clj
+msgid "The dashboard is in the PDF below."
+msgstr "仪表板内容见下方 PDF。"
+
+#: metabase/channel/impl/http.clj
+msgid "Metabase could not make a PDF of the dashboard this time. Open it in Metabase instead."
+msgstr "这次没能生成仪表板 PDF，请在 Metabase 中查看。"
+
+#: metabase/channel/impl/http.clj
+msgid "Filters: {0}"
+msgstr "筛选条件：{0}"

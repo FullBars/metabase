@@ -10,6 +10,7 @@
    [metabase.channel.core :as channel]
    [metabase.notification.core :as notification]
    [metabase.notification.test-util :as notification.tu]
+   [metabase.pulse.send :as pulse.send]
    [metabase.server.handler :as server.handler]
    [metabase.server.middleware.json :as mw.json]
    [metabase.test :as mt]
@@ -597,3 +598,132 @@
                                    uploaded)]
       (is (empty? (card-images message)))
       (is (empty? calls)))))
+
+;;; Feishu group chats: a webhook whose URL is the Feishu app's send message endpoint for a chat. Messages go out as
+;;; the app, which can also send files.
+
+(defn- feishu-app-routes
+  "The Feishu open platform as the app uses it to send to a group chat: the tenant token, image and file uploads and
+  the send message endpoint. Records each call in `calls`."
+  [calls]
+  (into (feishu-open-platform-routes calls uploaded)
+        [(make-route :post "/open-apis/im/v1/files"
+                     (fn [req]
+                       (let [body (slurp (:body req) :encoding "UTF-8")]
+                         (swap! calls conj [:file {:authorization (get-in req [:headers "authorization"])
+                                                   :file-type     (second (re-find #"name=\"file_type\"\r\n(?:[^\r]*\r\n)*?\r\n([^\r]*)" body))
+                                                   :file-name     (second (re-find #"name=\"file_name\"\r\n(?:[^\r]*\r\n)*?\r\n([^\r]*)" body))
+                                                   :pdf?          (str/includes? body "%PDF")}]))
+                       {:status 200
+                        :body   {:code 0 :msg "success" :data {:file_key "file_v3_test"}}}))
+         (make-route :post "/open-apis/im/v1/messages"
+                     (fn [req]
+                       (swap! calls conj [:message {:authorization   (get-in req [:headers "authorization"])
+                                                    :receive_id_type (get-in req [:query-params "receive_id_type"])
+                                                    :body            (:body req)}])
+                       {:status 200
+                        :body   {:code 0 :msg "success" :data {:message_id "om_test"}}}))]))
+
+(defn- group-chat-url
+  [server-url]
+  (str server-url "/open-apis/im/v1/messages?receive_id_type=chat_id&receive_id=oc_test"))
+
+(defn- sent-messages
+  "The messages sent to the group chat, with their JSON `content` decoded."
+  [calls]
+  (for [[kind {:keys [body]}] calls
+        :when (= :message kind)]
+    (update body :content json/decode+kw)))
+
+(defmacro ^:private with-feishu-app
+  [& body]
+  `(mt/with-temporary-setting-values [~'feishu-app-id     "cli_test"
+                                      ~'feishu-app-secret "app-secret"]
+     ~@body))
+
+(deftest feishu-group-chat-can-connect-test
+  (mt/with-temp-env-var-value! [mb-http-channel-allowed-networks "allow-all"]
+    (let [calls (atom [])]
+      (with-server [url (feishu-app-routes calls)]
+        (testing "a Feishu group chat webhook is tested by the app sending the chat a text message"
+          (with-feishu-app
+            (is (true? (can-connect? {:url (group-chat-url url) :auth-method "none"}))))
+          (is (=? [[:token {:app_id "cli_test" :app_secret "app-secret"}]
+                   [:message {:authorization   "Bearer t-test-token"
+                              :receive_id_type "chat_id"
+                              :body            {:receive_id "oc_test" :msg_type "text"}}]]
+                  @calls))
+          (is (=? [{:content {:text #".*Metabase.*"}}] (sent-messages @calls))))
+        (testing "without a Feishu app the error says what to set up"
+          (mt/with-temporary-setting-values [feishu-app-id nil feishu-app-secret nil]
+            (is (thrown-with-msg? clojure.lang.ExceptionInfo #"MB_FEISHU_APP_ID"
+                                  (can-connect? {:url (group-chat-url url) :auth-method "none"})))))))))
+
+(deftest alert-feishu-group-chat-test
+  (testing "an alert to a Feishu group chat is the same card, sent as the app"
+    (mt/with-temp-env-var-value! [mb-http-channel-allowed-networks "allow-all"]
+      (let [calls (atom [])]
+        (with-server [url (feishu-app-routes calls)]
+          (with-feishu-app
+            (mt/with-temp [:model/Channel {chn-id :id} {:type    :channel/http
+                                                        :details {:url (group-chat-url url) :auth-method "none"}}]
+              (notification.tu/with-card-notification
+                [notification {:card     {:name          "有消耗无订单"
+                                          :display       :table
+                                          :dataset_query (mt/mbql-query checkins {:aggregation [:count]})}
+                               :handlers [{:channel_type :channel/http :channel_id chn-id}]}]
+                (notification/send-notification! (t2/select-one :model/Notification (:id notification))
+                                                 :notification/sync? true))))
+          (is (=? [{:receive_id "oc_test"
+                    :msg_type   "interactive"
+                    :content    {:schema "2.0" :header {:title {:content "有消耗无订单"}}}}]
+                  (sent-messages @calls))))))))
+
+(deftest dashboard-subscription-feishu-group-chat-test
+  (testing "a dashboard subscription to a Feishu group chat sends a card linking to the dashboard, then the
+            dashboard as a PDF file"
+    (mt/with-temp-env-var-value! [mb-http-channel-allowed-networks "allow-all"]
+      (let [calls (atom [])]
+        (with-server [url (feishu-app-routes calls)]
+          (with-feishu-app
+            (mt/with-temp [:model/Channel       {chn-id :id}       {:type    :channel/http
+                                                                    :details {:url (group-chat-url url) :auth-method "none"}}
+                           :model/Card          {card-id :id}      {:name          "Orders per month"
+                                                                    :display       :line
+                                                                    :dataset_query (mt/mbql-query checkins {:aggregation [:count]
+                                                                                                            :breakout    [!month.date]})}
+                           :model/Dashboard     {dashboard-id :id} {:name       "Daily KPIs"
+                                                                    :parameters [{:id      "period"
+                                                                                  :slug    "period"
+                                                                                  :name    "Date"
+                                                                                  :type    "date/all-options"
+                                                                                  :default "thismonth"}]}
+                           :model/DashboardCard _                  {:dashboard_id dashboard-id :card_id card-id}
+                           :model/Pulse         {pulse-id :id}     {:name "Daily KPIs" :dashboard_id dashboard-id}
+                           :model/PulseCard     _                  {:pulse_id pulse-id :card_id card-id :position 0}
+                           :model/PulseChannel  _                  {:pulse_id     pulse-id
+                                                                    :channel_type :http
+                                                                    :channel_id   chn-id}]
+              (notification.tu/with-send-notification-sync
+                (notification.tu/with-javascript-visualization-stub
+                  (pulse.send/send-pulse! (t2/select-one :model/Pulse pulse-id))))
+              (let [[card-message file-message :as messages] (sent-messages @calls)]
+                (is (= 2 (count messages)))
+                (testing "first a card naming the dashboard, with a button that opens it"
+                  (is (=? {:receive_id "oc_test"
+                           :msg_type   "interactive"
+                           :content    {:header {:title {:content "Daily KPIs"}}}}
+                          card-message))
+                  (is (some #(str/includes? (str (get-in % [:behaviors 0 :default_url])) (str "/dashboard/" dashboard-id))
+                            (-> card-message :content :body :elements))))
+                (testing "and its filter values, formatted as other subscriptions show them"
+                  (is (some #(str/includes? (str (:content %)) "Date: This month")
+                            (-> card-message :content :body :elements))))
+                (testing "then the dashboard's PDF, uploaded by the app and sent as a file"
+                  (is (=? [[:file {:authorization "Bearer t-test-token"
+                                   :file-type     "pdf"
+                                   :file-name     "Daily KPIs.pdf"
+                                   :pdf?          true}]]
+                          (filter #(= :file (first %)) @calls)))
+                  (is (=? {:receive_id "oc_test" :msg_type "file" :content {:file_key "file_v3_test"}}
+                          file-message)))))))))))

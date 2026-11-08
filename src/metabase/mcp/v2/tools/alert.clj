@@ -520,9 +520,15 @@
    [:name [:string {:min 1
                     :description (str "Name to show in Metabase and to pass as alert_write's `webhook`, "
                                       "e.g. \"飞书 · 投放告警群\". Must not be taken by another channel.")}]]
-   [:url [:string {:min 1
-                   :description (str "The webhook URL. For a Feishu (飞书) or Lark group bot, the custom bot's "
-                                     "address, https://open.feishu.cn/open-apis/bot/v2/hook/....")}]]
+   [:url {:optional true}
+    [:maybe [:string {:min 1
+                      :description (str "The webhook URL. For a Feishu (飞书) or Lark group's custom bot, its address, "
+                                        "https://open.feishu.cn/open-apis/bot/v2/hook/.... Pass this or feishu_chat_id.")}]]]
+   [:feishu_chat_id {:optional true}
+    [:maybe [:string {:min 1
+                      :description (str "Id of a Feishu group chat (oc_...) the Feishu app is in, instead of a url: "
+                                        "Metabase then sends there as the app, which can also send files, so the "
+                                        "chat can receive dashboard subscriptions as PDFs.")}]]]
    [:description {:optional true} [:maybe [:string {:description "Optional note shown in Admin settings > Webhooks."}]]]])
 
 (defn- connection-failure-detail
@@ -532,7 +538,8 @@
 
 (registry/deftool create-webhook
   "Add a webhook that alerts can deliver to, such as a Feishu (飞书) or Lark group bot: pass a name and the bot's webhook
-  URL (https://open.feishu.cn/open-apis/bot/v2/hook/...). Metabase first sends it a test message (a Feishu bot posts it
+  URL (https://open.feishu.cn/open-apis/bot/v2/hook/...), or feishu_chat_id (oc_...) for a group chat the Feishu app is
+  in, which can also receive dashboard subscriptions as PDFs (subscription_write). Metabase first sends it a test message (a Feishu bot posts it
   in its group) and saves the webhook only when that works; the response is its id and name. Then deliver an alert
   there with alert_write: channel \"webhook\" and webhook set to the name. Adding a webhook needs the caller to be
   allowed to manage Metabase settings, as in Admin settings > Webhooks. Webhooks that need authentication or signatures
@@ -543,10 +550,16 @@
    ;; `openWorldHint`: it posts a test message to the URL, outside Metabase.
    :annotations    {:readOnlyHint false, :destructiveHint false, :openWorldHint true}
    :args           create-webhook-args-schema}
-  [{webhook-name :name :keys [url description]} _context]
+  [{webhook-name :name :keys [url feishu_chat_id description]} _context]
+  (when-not (or url feishu_chat_id)
+    (common/throw-teaching-error
+     (message/msg [(str "Pass the webhook's url, or feishu_chat_id for a Feishu group chat the Feishu app is in.")])))
   (common/success-content
    (try
-     (models.channel/create-webhook! {:name webhook-name :url url :description description})
+     (models.channel/create-webhook! {:name           webhook-name
+                                      :url            url
+                                      :feishu-chat-id feishu_chat_id
+                                      :description    description})
      (catch clojure.lang.ExceptionInfo e
        (if (= 403 (:status-code (ex-data e)))
          (throw e)

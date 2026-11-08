@@ -17,6 +17,7 @@
    [clojure.string :as str]
    [medley.core :as m]
    [metabase.api.common :as api]
+   [metabase.channel.models.channel :as models.channel]
    [metabase.channel.settings :as channel.settings]
    [metabase.mcp.db :as mcp.db]
    [metabase.mcp.scope :as mcp.scope]
@@ -144,6 +145,33 @@
     ;; that cannot occur — cheaply.
     {:channel display-name :channel_id (:id entry)}))
 
+(defn- dashboard-webhook-id
+  "The id of the active webhook named `webhook` (its name or id) when it can receive a dashboard subscription: a Feishu
+  group chat, which gets the dashboard as a PDF."
+  [webhook]
+  (let [found (models.channel/find-active-webhook webhook)
+        names (mapv :name (models.channel/active-dashboard-webhooks))]
+    (cond
+      (nil? found)
+      (common/throw-teaching-error
+       (if (seq names)
+         (message/msg ["No active webhook named %s. The webhooks that can take a dashboard subscription are: %s."]
+                      webhook
+                      (apply message/msg [(str/join ", " (repeat (count names) "%s"))] names))
+         (message/msg [(str "No active webhook named %s, and none can take a dashboard subscription yet — add a "
+                            "Feishu group chat with create_webhook's feishu_chat_id.")]
+                      webhook)))
+
+      (not (models.channel/receives-dashboards? (:id found)))
+      (common/throw-teaching-error
+       (message/msg [(str "Webhook %s can't take a dashboard subscription: only a Feishu group chat webhook can, as "
+                          "the dashboard goes there as a PDF and a group's custom bot can't send files. Add the group "
+                          "chat with create_webhook's feishu_chat_id.")]
+                    webhook))
+
+      :else
+      (:id found))))
+
 (def ^:private schedule-keys
   [:schedule_type :schedule_hour :schedule_day :schedule_frame])
 
@@ -164,6 +192,11 @@
     (check-schedule! s)
     (u/select-non-nil-keys s schedule-keys)))
 
+(defn- tool-channel->stored
+  "The PulseChannel type of the tool's `channel`: a \"webhook\" is stored as \"http\"."
+  [channel]
+  (if (= "webhook" channel) "http" channel))
+
 (defn- build-channel
   "Merge the caller's delivery arguments onto `existing` (the subscription's current channel of
    this type, or nil when there isn't one yet). Only the arguments actually present change, so a
@@ -174,7 +207,15 @@
    encodes \"archived\" by disabling every one of its channels, and the channel write lands after
    the Pulse write, so an `:enabled` that disagrees resurrects a trashed subscription: its Quartz
    send trigger is re-registered and it keeps delivering from the trash."
-  [existing channel-type enabled? {:keys [schedule recipients slack_channel] :as args}]
+  [existing channel-type enabled? {:keys [schedule recipients slack_channel webhook] :as args}]
+  (when (and webhook (not= "http" channel-type))
+    (common/throw-teaching-error
+     (message/msg [(str "\"webhook\" only applies to a webhook subscription — pass channel \"webhook\" "
+                        "to deliver there, or drop webhook.")])))
+  (when (and (= "http" channel-type) (or (contains? args :recipients) slack_channel))
+    (common/throw-teaching-error
+     (message/msg [(str "A webhook subscription delivers to its webhook, so it takes webhook rather than recipients "
+                        "or slack_channel.")])))
   (when (and (= "slack" channel-type) (contains? args :recipients))
     (common/throw-teaching-error
      (message/msg [(str "A Slack subscription posts to a channel and has no recipient list "
@@ -209,13 +250,20 @@
                                (merge (:details existing) (slack-details slack_channel))
                                (or (not-empty (:details existing))
                                    (slack-details nil)))}
-           ;; `:http` (webhook) is a real PulseChannel type this tool doesn't build, and
-           ;; `target-channel-type` reaches it by reading an existing subscription's only channel.
-           ;; Without this the `case` throws an IllegalArgumentException that surfaces as a bare
-           ;; "Internal error", which tells the agent nothing about what to do instead.
+           ;; A webhook, which the tool calls channel "webhook". Only a Feishu group chat takes a dashboard.
+           "http"  {:channel_id (cond
+                                  webhook                (dashboard-webhook-id webhook)
+                                  (:channel_id existing) (:channel_id existing)
+                                  :else (common/throw-teaching-error
+                                         (message/msg [(str "\"webhook\" is required for a webhook subscription — "
+                                                            "the name of a Feishu group chat webhook.")])))}
+           ;; A channel type this tool doesn't build, reached by `target-channel-type` reading an
+           ;; existing subscription's only channel. Without this the `case` throws an
+           ;; IllegalArgumentException that surfaces as a bare "Internal error", which tells the agent
+           ;; nothing about what to do instead.
            (common/throw-teaching-error
             (message/msg [(str "This subscription delivers over %s, which this tool cannot edit "
-                               "— it handles \"email\" and \"slack\". Edit it in Metabase, or "
+                               "— it handles \"email\", \"slack\" and \"webhook\". Edit it in Metabase, or "
                                "create a separate email or Slack subscription for the dashboard.")]
                          channel-type)))))
 
@@ -237,7 +285,7 @@
    `archived` or `parameters` must leave the channel list out of the payload entirely — sending
    it back would re-register the send trigger for no reason."
   [args]
-  (boolean (some #(contains? args %) [:schedule :channel :slack_channel :recipients])))
+  (boolean (some #(contains? args %) [:schedule :channel :slack_channel :recipients :webhook])))
 
 ;;; ------------------------------------------------ Parameters ----------------------------------------------------
 
@@ -299,7 +347,7 @@
   (let [dashboard (-> (v2.resolve/resolve-and-read :model/Dashboard dashboard_id)
                       (t2/hydrate [:dashcards :card]))
         cards     (subscription-cards dashboard)
-        channel   (build-channel nil (or channel "email") true args)
+        channel   (build-channel nil (tool-channel->stored (or channel "email")) true args)
         ;; `collection_id` is deliberately nil rather than the dashboard's: the Pulse model derives
         ;; it from `dashboard_id`, and naming it here would make the create-check demand *write*
         ;; access to the dashboard's collection — anyone who can view a dashboard can subscribe to
@@ -346,7 +394,7 @@
    the subscription's archived state for every channel, not just the edited one (see
    [[build-channel]])."
   [existing-channels channel enabled? args]
-  (let [channel-type (target-channel-type channel existing-channels)
+  (let [channel-type (target-channel-type (tool-channel->stored channel) existing-channels)
         same-type?   #(= channel-type (name (:channel_type %)))]
     (conj (mapv #(assoc % :enabled enabled?) (remove same-type? existing-channels))
           (build-channel (m/find-first same-type? existing-channels) channel-type enabled? args))))
@@ -414,8 +462,16 @@
    [:schedule {:optional true} [:maybe schedule-schema]]
    [:channel {:optional true}
     [:maybe [:enum {:description (str "Where to deliver. Defaults to \"email\" on create; on update, "
-                                      "to the subscription's channel when it has exactly one.")}
-             "email" "slack"]]]
+                                      "to the subscription's channel when it has exactly one. \"webhook\" sends "
+                                      "the dashboard as a PDF to a Feishu group chat webhook named by `webhook`.")}
+             "email" "slack" "webhook"]]]
+   [:webhook {:optional true}
+    [:maybe [:or
+             [:string {:min 1
+                       :description (str "Name of a Feishu (飞书) group chat webhook, which gets the dashboard as a "
+                                         "PDF. Required for channel \"webhook\". create_webhook with feishu_chat_id "
+                                         "adds one.")}]
+             [:int {:description "Numeric id of that webhook."}]]]]
    [:slack_channel {:optional true}
     [:maybe [:string {:description "Slack channel or username to post to, e.g. \"data-team\". Required for channel \"slack\"."}]]]
    [:recipients {:optional true}
@@ -480,8 +536,9 @@
   accepts archived (true pauses and trashes it, false restores — there is no hard delete). The server assembles what
   gets sent from the dashboard's own cards, so you never list them. schedule is {schedule_type: \"hourly\" | \"daily\"
   | \"weekly\" | \"monthly\", schedule_hour?, schedule_day?, schedule_frame?} — daily and up need schedule_hour,
-  weekly also needs schedule_day, monthly needs schedule_frame. channel is \"email\" (default) or \"slack\"; Slack
-  needs slack_channel, email takes recipients (user ids or raw email addresses, defaulting to you). parameters
+  weekly also needs schedule_day, monthly needs schedule_frame. channel is \"email\" (default), \"slack\" or
+  \"webhook\"; Slack needs slack_channel, email takes recipients (user ids or raw email addresses, defaulting to you),
+  and webhook needs webhook, a Feishu (飞书) group chat webhook that gets the dashboard as a PDF. parameters
   ({id, value} pairs naming the dashboard's own filters) makes a filtered subscription. On update, only the fields
   you pass change: a schedule-only update keeps the recipients, and a recipients list replaces the current one.
   A subscription that already delivers to both email and Slack needs channel to say which to edit. Creating a

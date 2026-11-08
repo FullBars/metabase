@@ -187,3 +187,26 @@
       (mt/with-dynamic-fn-redefs [agent-subscriptions/create-dashboard-subscription
                                   (fn [_] (throw (ex-info "boom" {})))]
         (is (thrown-with-msg? clojure.lang.ExceptionInfo #"boom" (subscribe! 1)))))))
+
+(deftest create-dashboard-subscription-to-webhook-test
+  (testing "Metabot subscribes a Feishu group chat webhook to a dashboard, which needs no Slack"
+    (mt/with-model-cleanup [:model/Pulse]
+      (mt/with-current-user (mt/user->id :crowberto)
+        (mt/with-temp [:model/Card          {card-id :id} {}
+                       :model/Dashboard     {dash-id :id} {:name "Sales KPIs"}
+                       :model/DashboardCard _ {:dashboard_id dash-id :card_id card-id}
+                       :model/Channel       {chat-id :id} {:name "飞书 · 经营群" :type :channel/http :active true
+                                                           :details {:url         "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id&receive_id=oc_test"
+                                                                     :auth-method "none"}}
+                       :model/Channel       _ {:name "飞书 · 群机器人" :type :channel/http :active true
+                                               :details {:url         "https://open.feishu.cn/open-apis/bot/v2/hook/test-token"
+                                                         :auth-method "none"}}]
+          (mt/with-dynamic-fn-redefs [channel.settings/slack-configured? (constantly false)]
+            (let [subscribe! #(agent-subscriptions/create-dashboard-subscription-tool
+                               {:dashboard_id dash-id :webhook % :schedule {:frequency "daily" :hour 9}})]
+              (is (= {:output "success"} (subscribe! "飞书 · 经营群")))
+              (is (=? [{:channel_type :http :channel_id chat-id :schedule_type :daily :schedule_hour 9}]
+                      (t2/select :model/PulseChannel
+                                 :pulse_id [:in (t2/select-pks-vec :model/Pulse :dashboard_id dash-id)])))
+              (testing "a custom bot webhook can't take a dashboard, since it can't send files"
+                (is (re-find #"group chat" (:output (subscribe! "飞书 · 群机器人"))))))))))))
