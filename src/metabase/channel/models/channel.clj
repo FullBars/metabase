@@ -5,13 +5,16 @@
    [metabase.analytics-interface.core :as analytics]
    [metabase.analytics.core :as analytics.core]
    [metabase.api.common :as api]
+   [metabase.channel.core :as channel]
    [metabase.channel.db :as channel.db]
    [metabase.channel.schema :as channel.schema]
+   [metabase.events.core :as events]
    [metabase.lib.schema.common :as lib.schema.common]
    [metabase.models.interface :as mi]
    [metabase.models.serialization :as serdes]
    [metabase.permissions.core :as perms]
    [metabase.util :as u]
+   [metabase.util.i18n :refer [tru]]
    [metabase.util.log :as log]
    [metabase.util.malli :as mu]
    [metabase.util.malli.registry :as mr]
@@ -132,6 +135,26 @@
           (some #(when (= id (:id %)) %) webhooks))
         (when (string? name-or-id)
           (some #(when (= (norm name-or-id) (norm (:name %))) %) webhooks)))))
+
+(defn create-webhook!
+  "Create an active webhook channel named `webhook-name` that posts to `url` without authentication, as the current
+  user: what the admin Webhooks form does, for agents. Like the REST API it needs the setting permission and a name no
+  channel has. It runs the form's connection test first, so a URL that doesn't answer, or a Feishu bot that rejects
+  the message, is never saved; a Feishu bot gets a test message in its group. Returns the channel's `:id` and `:name`."
+  [{webhook-name :name :keys [url description]}]
+  (perms/check-has-application-permission :setting)
+  (when (channel.db/channel-name-exists? webhook-name)
+    (throw (ex-info (tru "A channel named {0} already exists." webhook-name)
+                    {:status-code 409})))
+  (let [details {:url url :auth-method "none" :fe-form-type "none" :method "post"}]
+    (channel/can-connect? :channel/http details)
+    (let [created (channel.db/insert-channel! (cond-> {:name    webhook-name
+                                                       :type    :channel/http
+                                                       :details details
+                                                       :active  true}
+                                                description (assoc :description description)))]
+      (events/publish-event! :event/channel-create {:object created :user-id api/*current-user-id*})
+      (select-keys created [:id :name]))))
 
 ;; ------------------------------------------------------------------------------------------------;;
 ;;                                       :model/ChannelTemplate                                    ;;

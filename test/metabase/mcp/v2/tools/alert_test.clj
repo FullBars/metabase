@@ -8,6 +8,7 @@
    [clojure.string :as str]
    [clojure.test :refer :all]
    [metabase.channel.email.messages :as messages]
+   [metabase.channel.impl.http-test :as http-test]
    [metabase.channel.settings :as channel.settings]
    [metabase.mcp.v2.message :as message]
    [metabase.mcp.v2.registry :as registry]
@@ -433,6 +434,56 @@
               (tool-result (call-tool! :crowberto v2.tu/all-scopes
                                        (wire {:method "update" :id (:id alert) :channel "email"})))
               (is (= [[:channel/email nil]] (handlers (:id alert)))))))))))
+
+(defn- create-webhook-call!
+  [user scopes args]
+  (mt/with-current-user (mt/user->id user)
+    (registry/call-tool scopes nil "create_webhook" args)))
+
+(defn- feishu-bot
+  "A Feishu custom bot answering every message with `response`, recording what it receives in `received`."
+  [received path response]
+  (http-test/make-route :post path (fn [req]
+                                     (swap! received conj (:body req))
+                                     {:status 200 :body response})))
+
+(deftest create-webhook-test
+  (mt/with-temp-env-var-value! [mb-http-channel-allowed-networks "allow-all"]
+    (mt/with-model-cleanup [:model/Channel :model/Notification]
+      (let [received  (atom [])
+            accepting (feishu-bot received "/open-apis/bot/v2/hook/new-bot" {:code 0 :msg "success"})
+            rejecting (feishu-bot (atom []) "/open-apis/bot/v2/hook/signed-bot"
+                                  {:code 19021 :msg "sign match fail or timestamp is not within one hour from current time"})]
+        (http-test/with-server [url [accepting rejecting]]
+          (let [hook-url (str url (:path accepting))]
+            (testing "an agent adds a Feishu bot as a webhook; the bot gets a connection test message first"
+              (let [result (tool-result (create-webhook-call! :crowberto v2.tu/all-scopes
+                                                              (wire {:name "飞书 · 新群" :url hook-url})))]
+                (is (=? {:id pos-int? :name "飞书 · 新群"} result))
+                (is (=? {:type :channel/http :active true :details {:url hook-url :auth-method "none"}}
+                        (t2/select-one :model/Channel (:id result))))
+                (is (=? [{:msg_type "text"}] @received))
+                (testing "and alert_write delivers to it by name right away"
+                  (mt/with-temp [:model/Card {card-id :id} {}]
+                    (is (=? [{:channel_type "channel/http" :channel_id (:id result)}]
+                            (:handlers (create-alert! card-id {:channel "webhook" :webhook "飞书 · 新群"}))))))))
+            (testing "a name another channel has is a teaching error"
+              (is (re-find #"飞书 · 新群"
+                           (tool-error (create-webhook-call! :crowberto v2.tu/all-scopes
+                                                             (wire {:name "飞书 · 新群" :url hook-url}))))))
+            (testing "someone who can't manage Metabase settings can't add one, as in Admin settings"
+              (is (dispatch-error? (create-webhook-call! :rasta v2.tu/all-scopes
+                                                         (wire {:name "rasta's hook" :url hook-url}))))
+              (is (not (t2/exists? :model/Channel :name "rasta's hook"))))
+            (testing "it needs the delivery scope, like alert_write"
+              (is (dispatch-error? (create-webhook-call! :crowberto #{metabot.scope/agent-content-read}
+                                                         (wire {:name "no scope" :url hook-url}))))
+              (is (not (t2/exists? :model/Channel :name "no scope")))))
+          (testing "a webhook that rejects the test message isn't saved, and the error says why"
+            (is (re-find #"sign match fail"
+                         (tool-error (create-webhook-call! :crowberto v2.tu/all-scopes
+                                                           (wire {:name "signed bot" :url (str url (:path rejecting))})))))
+            (is (not (t2/exists? :model/Channel :name "signed bot")))))))))
 
 ;;; ------------------------------------------------- update -------------------------------------------------------
 

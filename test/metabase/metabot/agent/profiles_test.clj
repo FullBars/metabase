@@ -34,8 +34,9 @@
         (is (contains? (tool-names profile) "search"))
         (is (contains? (tool-names profile) "create_sql_query"))
         (is (contains? (tool-names profile) "create_chart"))
-        (testing "the in-app Metabot can create alerts, e.g. to a Feishu group bot webhook"
-          (is (contains? (tool-names profile) "create_alert")))))
+        (testing "the in-app Metabot can create alerts, e.g. to a Feishu group bot webhook, and add the webhook"
+          (is (contains? (tool-names profile) "create_alert"))
+          (is (contains? (tool-names profile) "create_webhook")))))
     (testing "retrieves sql profile"
       (let [profile (profiles/get-profile :sql)]
         (is (=? {:name :sql
@@ -68,6 +69,7 @@
         (is (contains? (tool-names profile) "construct_notebook_query"))
         (is (contains? (tool-names profile) "static_viz"))
         (is (contains? (tool-names profile) "create_alert"))
+        (is (contains? (tool-names profile) "create_webhook"))
         (is (contains? (tool-names profile) "create_dashboard_subscription"))))
     (testing "returns nil for unknown profile"
       (is (nil? (profiles/get-profile :unknown-profile))))

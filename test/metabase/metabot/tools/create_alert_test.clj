@@ -1,6 +1,7 @@
 (ns metabase.metabot.tools.create-alert-test
   (:require
    [clojure.test :refer :all]
+   [metabase.channel.impl.http-test :as http-test]
    [metabase.channel.settings :as channel.settings]
    [metabase.metabot.tools.create-alert
     :as metabot.tools.create-alert]
@@ -149,3 +150,32 @@
                    :webhook        "飞书 · 数据告警"}))))
         (is (= [[:channel/http chan-id]]
                (card-alert-handlers card-id)))))))
+
+(deftest create-webhook-tool-test
+  (mt/with-temp-env-var-value! [mb-http-channel-allowed-networks "allow-all"]
+    (mt/with-model-cleanup [:model/Channel]
+      (let [received  (atom [])
+            accepting (http-test/make-route :post "/open-apis/bot/v2/hook/new-bot"
+                                            (fn [req]
+                                              (swap! received conj (:body req))
+                                              {:status 200 :body {:code 0 :msg "success"}}))
+            rejecting (http-test/make-route :post "/open-apis/bot/v2/hook/signed-bot"
+                                            (fn [_] {:status 200 :body {:code 19021 :msg "sign match fail"}}))]
+        (http-test/with-server [url [accepting rejecting]]
+          (let [create! (fn [user args]
+                          (mt/with-current-user (mt/user->id user)
+                            (metabot.tools.create-alert/create-webhook-tool args)))]
+            (testing "Metabot adds a Feishu bot as a webhook that create_alert can then use by name"
+              (let [{:keys [output]} (create! :crowberto {:name "飞书 · 新群" :url (str url (:path accepting))})]
+                (is (re-find #"飞书 · 新群" output))
+                (is (=? {:type :channel/http :active true}
+                        (t2/select-one :model/Channel :name "飞书 · 新群")))
+                (is (=? [{:msg_type "text"}] @received))))
+            (testing "someone who can't manage Metabase settings can't add one"
+              (is (re-find #"(?i)permission"
+                           (:output (create! :rasta {:name "rasta's hook" :url (str url (:path accepting))}))))
+              (is (not (t2/exists? :model/Channel :name "rasta's hook"))))
+            (testing "a webhook that rejects the test message isn't saved, and the output says why"
+              (is (re-find #"sign match fail"
+                           (:output (create! :crowberto {:name "signed bot" :url (str url (:path rejecting))}))))
+              (is (not (t2/exists? :model/Channel :name "signed bot"))))))))))

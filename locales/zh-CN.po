@@ -39886,8 +39886,8 @@ msgid "Write and run its own raw SQL on your connected databases"
 msgstr "在你连接的数据库上编写并运行自己的原始 SQL"
 
 #: metabase/metabot/scope.clj
-msgid "Set up scheduled delivery of your data to email addresses and Slack channels it chooses, and to webhooks an admin set up"
-msgstr "将你的数据按计划发送到它选择的邮箱地址和 Slack 频道，以及管理员设置好的 Webhook（如飞书群机器人）"
+msgid "Set up scheduled delivery of your data to email addresses, Slack channels, and webhooks it chooses, including webhooks it adds"
+msgstr "将你的数据按计划发送到它选择的邮箱地址、Slack 频道和 Webhook（如飞书群机器人），也可以由它新建 Webhook"
 
 #: metabase/metabot/scope.clj
 msgid "Create saved questions"
@@ -46282,3 +46282,7 @@ msgstr "仅显示前 {0} 行，完整结果请在 Metabase 中查看。"
 #: metabase/channel/impl/http.clj
 msgid "View in Metabase"
 msgstr "在 Metabase 中查看"
+
+#: metabase/channel/models/channel.clj
+msgid "A channel named {0} already exists."
+msgstr "已经有名为 {0} 的渠道了。"

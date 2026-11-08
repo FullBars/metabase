@@ -15,6 +15,7 @@
     "browse_collection"
     "browse_data"
     "collection_write"
+    "create_webhook"
     "dashboard_write"
     "document_write"
     "duplicate_content"

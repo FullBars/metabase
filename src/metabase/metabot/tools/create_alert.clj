@@ -101,6 +101,36 @@
         (-> (metabot.tools.u/handle-agent-error e)
             (set/rename-keys {:output :error}))))))
 
+(def ^:private webhook-schema
+  [:map {:closed true}
+   [:name [:string {:min 1}]]
+   [:url [:string {:min 1}]]
+   [:description {:optional true} [:maybe :string]]])
+
+(mu/defn ^{:tool-name "create_webhook"
+           :scope     scope/agent-alert-create}
+  create-webhook-tool
+  "Add a webhook that alerts can deliver to, such as a Feishu (飞书) or Lark group bot. Use it when the user wants
+  alerts in a group whose webhook isn't set up in Metabase yet and gives you the bot's webhook URL
+  (https://open.feishu.cn/open-apis/bot/v2/hook/...).
+
+  `name` is how the webhook shows in Metabase and what you then pass as create_alert's `webhook`; it must not be
+  taken. `url` is the webhook URL. `description` is an optional note.
+
+  Metabase first sends the webhook a test message (a Feishu bot posts it in its group) and saves the webhook only
+  when that works. Adding a webhook needs the user to be allowed to manage Metabase settings."
+  [{webhook-name :name :keys [url description]} :- webhook-schema]
+  (try
+    (let [{:keys [id]} (models.channel/create-webhook! {:name webhook-name :url url :description description})]
+      {:output (str "Webhook \"" webhook-name "\" (id " id ") created, and Metabase's test message reached it. "
+                    "Pass webhook \"" webhook-name "\" to create_alert to deliver alerts there.")})
+    (catch clojure.lang.ExceptionInfo e
+      (let [{:keys [status-code request-body]} (ex-data e)]
+        (if (= 403 status-code)
+          (metabot.tools.u/handle-agent-or-api-error e)
+          {:output (str "Couldn't add the webhook: " (ex-message e)
+                        (when request-body (str " The webhook answered " (pr-str request-body) ".")))})))))
+
 (def schedule-schema
   "Schedule schema shared with create-dashboard-subscription tool."
   [:or

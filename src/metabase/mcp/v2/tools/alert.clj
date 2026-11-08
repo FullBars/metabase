@@ -515,6 +515,47 @@
                                          "agent:query:run scope). Defaults to true on create. Alerts have no "
                                          "archived state and cannot be deleted here.")}]]]])
 
+(def ^:private create-webhook-args-schema
+  [:map {:closed true}
+   [:name [:string {:min 1
+                    :description (str "Name to show in Metabase and to pass as alert_write's `webhook`, "
+                                      "e.g. \"飞书 · 投放告警群\". Must not be taken by another channel.")}]]
+   [:url [:string {:min 1
+                   :description (str "The webhook URL. For a Feishu (飞书) or Lark group bot, the custom bot's "
+                                     "address, https://open.feishu.cn/open-apis/bot/v2/hook/....")}]]
+   [:description {:optional true} [:maybe [:string {:description "Optional note shown in Admin settings > Webhooks."}]]]])
+
+(defn- connection-failure-detail
+  "What the webhook answered to the connection test, for the teaching error: the parsed response body, or nil."
+  [e]
+  (some-> e ex-data :request-body pr-str (u/truncate 300)))
+
+(registry/deftool create-webhook
+  "Add a webhook that alerts can deliver to, such as a Feishu (飞书) or Lark group bot: pass a name and the bot's webhook
+  URL (https://open.feishu.cn/open-apis/bot/v2/hook/...). Metabase first sends it a test message (a Feishu bot posts it
+  in its group) and saves the webhook only when that works; the response is its id and name. Then deliver an alert
+  there with alert_write: channel \"webhook\" and webhook set to the name. Adding a webhook needs the caller to be
+  allowed to manage Metabase settings, as in Admin settings > Webhooks. Webhooks that need authentication or signatures
+  are set up there instead."
+  {:name           "create_webhook"
+   :default-access :allowed
+   :scope          metabot.scope/agent-delivery-write
+   ;; `openWorldHint`: it posts a test message to the URL, outside Metabase.
+   :annotations    {:readOnlyHint false, :destructiveHint false, :openWorldHint true}
+   :args           create-webhook-args-schema}
+  [{webhook-name :name :keys [url description]} _context]
+  (common/success-content
+   (try
+     (models.channel/create-webhook! {:name webhook-name :url url :description description})
+     (catch clojure.lang.ExceptionInfo e
+       (if (= 403 (:status-code (ex-data e)))
+         (throw e)
+         (common/throw-teaching-error
+          (if-let [detail (connection-failure-detail e)]
+            (message/msg ["Metabase couldn't add this webhook: %s The webhook answered %s."]
+                         (ex-message e) detail)
+            (message/msg ["Metabase couldn't add this webhook: %s"] (ex-message e)))))))))
+
 (registry/deftool alert-write
   "Create or update an alert: a notification sent on a schedule when a saved question's results meet a condition.
   method: \"create\" requires card_id (the question) and schedule; method: \"update\" requires id and changes only the

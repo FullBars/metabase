@@ -97,7 +97,8 @@
  [tools.static-viz
   static-viz-tool]
  [tools.create-alert
-  create-alert-tool]
+  create-alert-tool
+  create-webhook-tool]
  [tools.create-dashboard-subscription
   slackbot-create-dashboard-subscription-tool]
  [tools.skills

@@ -58,7 +58,7 @@ Access tokens are scoped to limit what tools a client can use:
 | ----- | --------------- |
 | `agent:content:read` | `browse_collection`, `browse_data`, `get_content`, `get_parameter_values`, `glossary`, `learn`, `search`, and the `catalog://metabase/fields` data resource (see [Resources](#resources)) |
 | `agent:content:write` | `bookmark_content`, `collection_write`, `dashboard_write`, `document_write`, `duplicate_content`, `measure_write`, `metric_write`, `question_write`, `segment_write` |
-| `agent:delivery:write` | `alert_write`, `subscription_write` |
+| `agent:delivery:write` | `alert_write`, `create_webhook`, `subscription_write` |
 | `agent:query:run` | `execute_query`, `refresh_ui_credential`, `render_drill_through`, `run_saved_question`, `visualize_query` |
 | `agent:sql:run` | `execute_sql` |
 
@@ -124,6 +124,7 @@ shows every tool whatever the token holds, and a token missing the scope may not
 | `browse_collection` | `agent:content:read` | Browse collections structurally — one uniform id over every partition: a numeric id, a 21-char entity_id, "root" (re-rooted per namespace), or "trash" (archived content, items mode only). |
 | `browse_data` | `agent:content:read` | Browse the data hierarchy: databases → schemas → tables → fields. |
 | `collection_write` | `agent:content:write` | Create, rename, move, archive, or restore a collection — the folders that hold questions, dashboards, models, and documents. |
+| `create_webhook` | `agent:delivery:write` | Add a webhook that alerts can deliver to, such as a Feishu (飞书) or Lark group bot: pass a name and the bot's webhook URL (https://open.feishu.cn/open-apis/bot/v2/hook/...). |
 | `dashboard_write` | `agent:content:write` | Create or update a dashboard and edit its layout with ordered ops. |
 | `document_write` | `agent:content:write` | Create or update a document. |
 | `duplicate_content` | `agent:content:write` | Copy a question, dashboard, or document into a collection — cheaper and safer than reading the original and re-creating it, and it preserves everything the read projections leave out. |
