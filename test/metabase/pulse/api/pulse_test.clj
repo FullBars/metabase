@@ -1346,6 +1346,30 @@
                                    :type             "slack"}}}
                (mt/user-http-request :rasta :get 200 "pulse/form_input")))))))
 
+(deftest form-input-dashboard-webhooks-test
+  (testing "GET /api/pulse/form_input lists the webhooks a dashboard subscription can go to, for people who manage them"
+    (mt/with-temp [:model/Channel {chat :id}     {:type    :channel/http
+                                                  :name    "飞书群 · 运营"
+                                                  :details {:url         "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id&receive_id=oc_abc"
+                                                            :auth-method "none"}}
+                   :model/Channel {bot :id}      {:type    :channel/http
+                                                  :details {:url         "https://open.feishu.cn/open-apis/bot/v2/hook/abc"
+                                                            :auth-method "none"}}
+                   :model/Channel {plain :id}    {:type    :channel/http
+                                                  :details {:url "https://metabasetest.com" :auth-method "none"}}
+                   :model/Channel {inactive :id} {:type    :channel/http
+                                                  :active  false
+                                                  :details {:url         "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id&receive_id=oc_off"
+                                                            :auth-method "none"}}]
+      (testing "an admin gets the active Feishu group chats, by id and name, without their URLs"
+        (let [webhooks (get-in (mt/user-http-request :crowberto :get 200 "pulse/form_input")
+                               [:channels :http :dashboard_webhooks])
+              ours     (filter (comp #{chat bot plain inactive} :id) webhooks)]
+          (is (= [{:id chat :name "飞书群 · 运营"}] ours))))
+      (testing "someone who can't manage webhooks doesn't see them"
+        (is (not (contains? (get-in (mt/user-http-request :rasta :get 200 "pulse/form_input") [:channels :http])
+                            :dashboard_webhooks)))))))
+
 (deftest form-input-slack-test
   (testing "GET /api/pulse/form_input"
     (testing "Check that Slack channels come back when configured"

@@ -12,7 +12,8 @@ import type {
  * form, or `null` when it can. The sidebar has an edit form for email and
  * Slack, and opens it whenever `form_input` lists the channel type, set up or
  * not, so a subscription can still be changed or deleted after its channel
- * stops working. It has no edit form for webhooks.
+ * stops working. Its webhook form needs the webhooks a dashboard can go to,
+ * which `form_input` lists only for people who manage webhooks.
  */
 export function getSubscriptionEditUnavailableReason(
   { channel_type }: Pick<Channel, "channel_type">,
@@ -26,9 +27,10 @@ export function getSubscriptionEditUnavailableReason(
     .with("slack", () =>
       hasChannelSpec ? null : t`You can't edit Slack subscriptions`,
     )
-    .with(
-      "http",
-      () => t`Webhook subscriptions can't be edited on the dashboard`,
+    .with("http", () =>
+      channelInfo.channels.http?.dashboard_webhooks != null
+        ? null
+        : t`Webhook subscriptions can't be edited on the dashboard`,
     )
     .exhaustive();
 }

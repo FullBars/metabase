@@ -104,6 +104,8 @@ type SetupOpts = {
   email?: boolean;
   emailConfigured?: boolean;
   slack?: boolean;
+  /** The webhooks `form_input` offers dashboards, as it does for admins; none for others. */
+  dashboardWebhooks?: { id: number; name: string }[];
   tokenFeatures?: Partial<TokenFeatures>;
   enterprisePlugins?: Parameters<typeof setupEnterpriseOnlyPlugin>[0][];
   isAdmin?: boolean;
@@ -126,6 +128,7 @@ export function setup({
   email = true,
   emailConfigured = true,
   slack = true,
+  dashboardWebhooks,
   tokenFeatures = {},
   enterprisePlugins,
   isAdmin = false,
@@ -150,6 +153,7 @@ export function setup({
     channels: {
       email?: any;
       slack?: any;
+      http?: any;
     };
   } = { channels: {} };
 
@@ -186,6 +190,17 @@ export function setup({
       ],
     };
   }
+
+  channelData.channels.http = {
+    type: "http",
+    name: "Webhook",
+    allows_recipients: false,
+    schedules: ["hourly", "daily", "weekly", "monthly"],
+    configured: dashboardWebhooks != null && dashboardWebhooks.length > 0,
+    ...(dashboardWebhooks != null
+      ? { dashboard_webhooks: dashboardWebhooks }
+      : {}),
+  };
 
   // Unjustified type cast. FIXME
   (mockIsEmbeddingSdk as jest.Mock).mockReturnValue(isEmbeddingSdk);

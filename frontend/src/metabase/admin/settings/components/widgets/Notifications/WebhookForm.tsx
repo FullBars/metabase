@@ -249,6 +249,9 @@ export const WebhookForm = ({
               </ExternalLink>
             )}`}
           </Alert>
+          <Alert size="compact" variant="light" mb="1.5rem">
+            {t`Feishu: a group's custom bot webhook URL receives alerts. To send alerts and dashboard subscriptions (as a PDF) to a group through the Feishu app, use https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id&receive_id= followed by the group's chat ID (oc_…), with no authentication.`}
+          </Alert>
           <Box mb="1.5rem">
             <Flex align="end" gap="1rem">
               <FormTextInput

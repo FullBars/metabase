@@ -1,4 +1,5 @@
 import cx from "classnames";
+import { match } from "ts-pattern";
 import { t } from "ttag";
 
 import { Sidebar } from "metabase/common/components/Sidebar";
@@ -145,16 +146,17 @@ function _PulsesListSidebar({
                   )}
                 >
                   <Icon
-                    name={
-                      pulse.channels[0].channel_type === "email"
-                        ? "mail"
-                        : "slack"
-                    }
+                    name={getChannelIcon(pulse.channels[0].channel_type)}
                     className={CS.mr1}
                     size={12}
                   />
                   <Label className={cx(CS.hoverChild, CS.hoverInherit)} mb="0">
-                    {formatSubscriptionDelivery(pulse.channels[0])}
+                    {formatSubscriptionDelivery(
+                      pulse.channels[0],
+                      formInput.channels.http?.dashboard_webhooks?.find(
+                        ({ id }) => id === pulse.channels[0].channel_id,
+                      )?.name,
+                    )}
                   </Label>
                 </div>
                 <PulseDetails pulse={pulse} parameters={parameters} />
@@ -165,6 +167,14 @@ function _PulsesListSidebar({
       </div>
     </Sidebar>
   );
+}
+
+function getChannelIcon(channelType: ChannelType): IconName {
+  return match(channelType)
+    .with("email", () => "mail" as const)
+    .with("slack", () => "slack" as const)
+    .with("http", () => "webhook" as const)
+    .exhaustive();
 }
 
 function getEmailSubject({

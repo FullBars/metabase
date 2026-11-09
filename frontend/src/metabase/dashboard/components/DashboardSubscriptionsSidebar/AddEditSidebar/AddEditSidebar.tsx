@@ -5,6 +5,7 @@ import { getHiddenParameterSlugs, getParameters } from "../../../selectors";
 
 import { AddEditEmailSidebar as AddEditEmailSidebarComponent } from "./AddEditEmailSidebar";
 import { AddEditSlackSidebar as AddEditSlackSidebarComponent } from "./AddEditSlackSidebar";
+import { AddEditWebhookSidebar as AddEditWebhookSidebarComponent } from "./AddEditWebhookSidebar";
 
 const mapStateToProps = (state: State) => {
   return {
@@ -18,4 +19,7 @@ export const AddEditEmailSidebar = connect(mapStateToProps)(
 );
 export const AddEditSlackSidebar = connect(mapStateToProps)(
   AddEditSlackSidebarComponent,
+);
+export const AddEditWebhookSidebar = connect(mapStateToProps)(
+  AddEditWebhookSidebarComponent,
 );

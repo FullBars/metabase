@@ -6,12 +6,16 @@ import { ChannelCard } from "metabase/notifications/pulse/components/ChannelCard
 import { useSelector } from "metabase/redux";
 import { getApplicationName } from "metabase/selectors/whitelabel";
 import { Box, Stack, Text, Title } from "metabase/ui";
+import type { DashboardWebhook } from "metabase-types/api";
 
 interface NewPulseSidebarProps {
   emailConfigured: boolean;
   slackConfigured: boolean;
+  /** The Feishu groups a dashboard can go to; undefined for people who don't manage webhooks. */
+  dashboardWebhooks?: DashboardWebhook[];
   onNewEmailPulse: () => void;
   onNewSlackPulse: () => void;
+  onNewWebhookPulse: () => void;
   onCancel: () => void;
 }
 
@@ -19,8 +23,10 @@ export function NewPulseSidebar({
   onCancel,
   emailConfigured,
   slackConfigured,
+  dashboardWebhooks,
   onNewEmailPulse,
   onNewSlackPulse,
+  onNewWebhookPulse,
 }: NewPulseSidebarProps) {
   const applicationName = useSelector(getApplicationName);
 
@@ -54,6 +60,19 @@ export function NewPulseSidebar({
             <ChannelCard title={t`Configure Slack`} channel="slack" />
           </Link>
         )}
+
+        {dashboardWebhooks != null &&
+          (dashboardWebhooks.length > 0 ? (
+            <ChannelCard
+              title={t`Send it to a Feishu group`}
+              channel="http"
+              onClick={onNewWebhookPulse}
+            />
+          ) : (
+            <Link to="/admin/settings/webhooks">
+              <ChannelCard title={t`Set up a Feishu group`} channel="http" />
+            </Link>
+          ))}
       </Stack>
     </Sidebar>
   );

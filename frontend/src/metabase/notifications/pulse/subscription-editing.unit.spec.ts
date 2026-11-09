@@ -27,6 +27,17 @@ const CONFIGURED_CHANNELS: ChannelApiResponse = {
   },
 };
 
+/** What `form_input` returns to someone who manages webhooks. */
+const WEBHOOK_MANAGER_CHANNELS: ChannelApiResponse = {
+  channels: {
+    ...CONFIGURED_CHANNELS.channels,
+    http: {
+      ...createChannelSpec({ type: "http" }),
+      dashboard_webhooks: [{ id: 7, name: "飞书群 · 运营" }],
+    },
+  },
+};
+
 const UNCONFIGURED_CHANNELS: ChannelApiResponse = {
   channels: {
     email: {
@@ -74,7 +85,16 @@ describe("getSubscriptionEditUnavailableReason", () => {
     ).toBe("You can't edit Slack subscriptions");
   });
 
-  it("never allows editing a webhook, even when it is configured", () => {
+  it("allows editing a webhook when the form input lists the webhooks a dashboard can go to", () => {
+    expect(
+      getSubscriptionEditUnavailableReason(
+        { channel_type: "http" },
+        WEBHOOK_MANAGER_CHANNELS,
+      ),
+    ).toBeNull();
+  });
+
+  it("explains that a webhook can't be edited when the form input doesn't list the dashboard's webhooks", () => {
     expect(
       getSubscriptionEditUnavailableReason(
         { channel_type: "http" },

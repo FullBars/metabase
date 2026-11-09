@@ -147,10 +147,12 @@ export function formatSubscriptionSchedule(channel: ChannelSchedule): string {
 
 /**
  * How and when a subscription sends, like "Emailed daily at 8:00 AM" or
- * "Sent to #sales hourly".
+ * "Sent to #sales hourly". A webhook subscription names its webhook when
+ * `webhookName` is given.
  */
 export function formatSubscriptionDelivery(
   channel: ChannelSchedule & Pick<Channel, "channel_type" | "details">,
+  webhookName?: string,
 ): string {
   const schedule = getSubscriptionSchedule(channel);
   if (schedule.type === "unset") {
@@ -173,11 +175,13 @@ export function formatSubscriptionDelivery(
         : c("{0} is when a subscription sends, like 'daily at 8:00 AM'")
             .t`Sent ${when}`,
     )
-    .with(
-      "http",
-      () =>
-        c("{0} is when a subscription sends, like 'daily at 8:00 AM'")
-          .t`Sent ${when}`,
+    .with("http", () =>
+      webhookName
+        ? c(
+            "{0} is a webhook, like a Feishu group, and {1} is when a subscription sends, like 'daily at 8:00 AM'",
+          ).t`Sent to ${webhookName} ${when}`
+        : c("{0} is when a subscription sends, like 'daily at 8:00 AM'")
+            .t`Sent ${when}`,
     )
     .exhaustive();
 }

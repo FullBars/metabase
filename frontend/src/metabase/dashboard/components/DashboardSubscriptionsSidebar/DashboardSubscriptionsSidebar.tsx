@@ -46,6 +46,7 @@ import { getSharingSubscriptionId } from "../../selectors";
 import {
   AddEditEmailSidebar,
   AddEditSlackSidebar,
+  AddEditWebhookSidebar,
 } from "./AddEditSidebar/AddEditSidebar";
 import { NewPulseSidebar } from "./NewPulseSidebar";
 import { PulsesListSidebar } from "./PulsesListSidebar";
@@ -54,6 +55,7 @@ import { getSupportedCardsForSubscriptions } from "./get-supported-cards-for-sub
 const EDITING_MODES = {
   ADD_EMAIL: "add-edit-email",
   ADD_SLACK: "add-edit-slack",
+  ADD_WEBHOOK: "add-edit-webhook",
   NEW_PULSE: "new-pulse",
   LIST_PULSES_OR_NEW_PULSE: "list-pulses-or-new-pulse",
 } as const;
@@ -63,6 +65,7 @@ type EditingMode = (typeof EDITING_MODES)[keyof typeof EDITING_MODES];
 const CHANNEL_TYPES = {
   EMAIL: "email",
   SLACK: "slack",
+  HTTP: "http",
 } as const;
 
 const cardsToPulseCards = (
@@ -213,7 +216,13 @@ function DashboardSubscriptionsSidebarInner({
         return;
       }
 
-      const channel = createChannel(channelSpec);
+      const dashboardWebhooks = formInput.channels.http?.dashboard_webhooks;
+      const channel = createChannel(
+        channelSpec,
+        type === CHANNEL_TYPES.HTTP && dashboardWebhooks?.length === 1
+          ? { channel_id: dashboardWebhooks[0].id }
+          : undefined,
+      );
 
       const newPulse: DraftDashboardSubscription = {
         ...NEW_PULSE_TEMPLATE,
@@ -379,6 +388,7 @@ function DashboardSubscriptionsSidebarInner({
       const editingModeMap: Partial<Record<ChannelType, EditingMode>> = {
         [CHANNEL_TYPES.EMAIL]: EDITING_MODES.ADD_EMAIL,
         [CHANNEL_TYPES.SLACK]: EDITING_MODES.ADD_SLACK,
+        [CHANNEL_TYPES.HTTP]: EDITING_MODES.ADD_WEBHOOK,
       };
       setReturnMode((prev) => [
         ...prev,
@@ -541,6 +551,42 @@ function DashboardSubscriptionsSidebarInner({
     );
   }
 
+  if (
+    editingMode === EDITING_MODES.ADD_WEBHOOK &&
+    pulse.channels &&
+    pulse.channels.length > 0
+  ) {
+    const channelDetails = pulse.channels
+      .map((c, i) => [c, i] as const)
+      .filter(([c]) => c.enabled && c.channel_type === CHANNEL_TYPES.HTTP);
+
+    const channelSpec = formInput.channels.http;
+    // protection from a failure where the channels aren't loaded yet
+    if (channelDetails.length === 0 || !channelSpec) {
+      return <Sidebar>{null}</Sidebar>;
+    }
+
+    const [channel, index] = channelDetails[0];
+    return (
+      <AddEditWebhookSidebar
+        pulse={pulse}
+        formInput={formInput}
+        channel={channel}
+        channelSpec={channelSpec}
+        webhooks={channelSpec.dashboard_webhooks ?? []}
+        handleSave={handleSave}
+        onCancel={handleCancel}
+        onChannelPropertyChange={_.partial(onChannelPropertyChange, index)}
+        onChannelScheduleChange={_.partial(onChannelScheduleChange, index)}
+        testPulse={testPulseFn}
+        toggleSkipIfEmpty={toggleSkipIfEmpty}
+        handleArchive={handleArchive}
+        dashboard={dashboard}
+        setPulseParameters={setPulseParameters}
+      />
+    );
+  }
+
   if (shouldDisplayNewPulse(editingMode, pulses) && !isEmbeddingSdk()) {
     const emailConfigured = formInput?.channels?.email?.configured || false;
     const slackConfigured = formInput?.channels?.slack?.configured || false;
@@ -550,6 +596,7 @@ function DashboardSubscriptionsSidebarInner({
         onCancel={handleCancel}
         emailConfigured={emailConfigured}
         slackConfigured={slackConfigured}
+        dashboardWebhooks={formInput?.channels?.http?.dashboard_webhooks}
         onNewEmailPulse={() => {
           if (emailConfigured) {
             setReturnMode((prev) => [...prev, editingMode]);
@@ -563,6 +610,11 @@ function DashboardSubscriptionsSidebarInner({
             setEditingMode(EDITING_MODES.ADD_SLACK);
             setPulseWithChannel(CHANNEL_TYPES.SLACK);
           }
+        }}
+        onNewWebhookPulse={() => {
+          setReturnMode((prev) => [...prev, editingMode]);
+          setEditingMode(EDITING_MODES.ADD_WEBHOOK);
+          setPulseWithChannel(CHANNEL_TYPES.HTTP);
         }}
       />
     );

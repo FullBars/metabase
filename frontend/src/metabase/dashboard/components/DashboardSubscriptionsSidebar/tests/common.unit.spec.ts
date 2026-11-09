@@ -564,4 +564,119 @@ describe("DashboardSubscriptionsSidebar", () => {
       ).not.toBeInTheDocument();
     });
   });
+
+  describe("Feishu group subscription sidebar", () => {
+    const dashboardWebhooks = [
+      { id: 7, name: "飞书群 · 运营" },
+      { id: 9, name: "飞书群 · 投放" },
+    ];
+
+    const pickFeishuGroup = async (name: string) => {
+      await userEvent.click(await screen.findByLabelText("Feishu group"));
+      await userEvent.click(await screen.findByRole("option", { name }));
+    };
+
+    it("lets an admin send the dashboard to the Feishu group they pick", async () => {
+      setup({ isAdmin: true, dashboardWebhooks });
+
+      await userEvent.click(
+        await screen.findByText("Send it to a Feishu group"),
+      );
+      expect(
+        await screen.findByText("Send this dashboard to a Feishu group"),
+      ).toBeInTheDocument();
+      expect(hasBasicFilterOptions(screen)).toBe(true);
+
+      await pickFeishuGroup("飞书群 · 投放");
+      await userEvent.click(screen.getByText("Send to Feishu now"));
+
+      const testCall = fetchMock.callHistory.lastCall("path:/api/pulse/test");
+      const testPayload = await testCall?.request?.json();
+      expect(testPayload.channels).toHaveLength(1);
+      expect(testPayload.channels[0]).toMatchObject({
+        channel_type: "http",
+        channel_id: 9,
+        enabled: true,
+      });
+
+      await userEvent.click(screen.getByRole("button", { name: "Done" }));
+      await waitFor(() =>
+        expect(
+          fetchMock.callHistory.called("path:/api/pulse", { method: "POST" }),
+        ).toBe(true),
+      );
+      const saveCall = fetchMock.callHistory.lastCall("path:/api/pulse", {
+        method: "POST",
+      });
+      const savePayload = await saveCall?.request?.json();
+      expect(savePayload.channels).toHaveLength(1);
+      expect(savePayload.channels[0]).toMatchObject({
+        channel_type: "http",
+        channel_id: 9,
+      });
+    });
+
+    it("can't be saved or sent before a Feishu group is picked", async () => {
+      setup({ isAdmin: true, dashboardWebhooks });
+
+      await userEvent.click(
+        await screen.findByText("Send it to a Feishu group"),
+      );
+
+      expect(
+        await screen.findByRole("button", { name: "Done" }),
+      ).toBeDisabled();
+      expect(
+        screen.getByRole("button", { name: /Send to Feishu now/ }),
+      ).toBeDisabled();
+    });
+
+    it("sends an admin with no Feishu group set up to the webhook settings", async () => {
+      setup({ isAdmin: true, dashboardWebhooks: [] });
+
+      expect(
+        await screen.findByText("Set up a Feishu group"),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("link", { name: /Set up a Feishu group/ }),
+      ).toHaveAttribute("href", "/admin/settings/webhooks");
+    });
+
+    it("isn't offered to people who can't manage webhooks", async () => {
+      setup({ isAdmin: false });
+
+      expect(await screen.findByText("Email it")).toBeInTheDocument();
+      expect(
+        screen.queryByText("Send it to a Feishu group"),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByText("Set up a Feishu group"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("opens an existing Feishu group subscription from the list to edit it", async () => {
+      const pulse = createMockDashboardSubscription({
+        id: 10,
+        channels: [
+          createMockChannel({
+            channel_type: "http",
+            channel_id: 9,
+            schedule_type: "hourly",
+          }),
+        ],
+      });
+      setup({ isAdmin: true, dashboardWebhooks, pulses: [pulse] });
+
+      await userEvent.click(
+        await screen.findByText("Sent to 飞书群 · 投放 hourly"),
+      );
+
+      expect(
+        await screen.findByText("Send this dashboard to a Feishu group"),
+      ).toBeInTheDocument();
+      expect(screen.getByLabelText("Feishu group")).toHaveValue(
+        "飞书群 · 投放",
+      );
+    });
+  });
 });

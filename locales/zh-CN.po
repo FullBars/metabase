@@ -46314,3 +46314,55 @@ msgstr "这次没能生成仪表板 PDF，请在 Metabase 中查看。"
 #: metabase/channel/impl/http.clj
 msgid "Filters: {0}"
 msgstr "筛选条件：{0}"
+
+#: frontend/src/metabase/admin/settings/components/widgets/Notifications/WebhookForm.tsx
+msgid "Feishu: a group's custom bot webhook URL receives alerts. To send alerts and dashboard subscriptions (as a PDF) to a group through the Feishu app, use https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id&receive_id= followed by the group's chat ID (oc_…), with no authentication."
+msgstr "飞书：填群自定义机器人的 Webhook 地址，可以接收警报。要用飞书应用往群里发警报和仪表板订阅（PDF），地址填 https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id&receive_id= 后接群 ID（oc_ 开头），认证方式选「无」。"
+
+#: frontend/src/metabase/dashboard/components/DashboardSubscriptionsSidebar/NewPulseSidebar.tsx
+msgid "Send it to a Feishu group"
+msgstr "发到飞书群"
+
+#: frontend/src/metabase/dashboard/components/DashboardSubscriptionsSidebar/NewPulseSidebar.tsx
+msgid "Set up a Feishu group"
+msgstr "设置飞书群"
+
+#: frontend/src/metabase/dashboard/components/DashboardSubscriptionsSidebar/AddEditSidebar/AddEditWebhookSidebar.tsx
+msgid "Send this dashboard to a Feishu group"
+msgstr "把这个仪表板发到飞书群"
+
+#: frontend/src/metabase/dashboard/components/DashboardSubscriptionsSidebar/AddEditSidebar/AddEditWebhookSidebar.tsx
+msgid "The group gets a card with the filters and a link, then the whole dashboard as a PDF."
+msgstr "群里会先收到一张卡片（含筛选条件和仪表板链接），再收到整个仪表板的 PDF。"
+
+#: frontend/src/metabase/dashboard/components/DashboardSubscriptionsSidebar/AddEditSidebar/AddEditWebhookSidebar.tsx
+msgid "Feishu group"
+msgstr "飞书群"
+
+#: frontend/src/metabase/dashboard/components/DashboardSubscriptionsSidebar/AddEditSidebar/AddEditWebhookSidebar.tsx
+msgid "Pick a Feishu group"
+msgstr "选择飞书群"
+
+#: frontend/src/metabase/dashboard/components/DashboardSubscriptionsSidebar/AddEditSidebar/AddEditWebhookSidebar.tsx
+msgid "Send to Feishu now"
+msgstr "立即发到飞书"
+
+#: frontend/src/metabase/dashboard/components/DashboardSubscriptionsSidebar/AddEditSidebar/AddEditWebhookSidebar.tsx
+msgid "Sent to Feishu"
+msgstr "已发到飞书"
+
+#: frontend/src/metabase/notifications/pulse/subscription-formatting.ts
+#, javascript-format
+msgctxt "{0} is a webhook, like a Feishu group, and {1} is when a subscription sends, like 'daily at 8:00 AM'"
+msgid "Sent to {0} {1}"
+msgstr "{1} 发到{0}"
+
+#: frontend/src/metabase/notifications/pulse/subscription-formatting.ts
+#, javascript-format
+msgctxt "{0} is when a subscription sends, like 'daily at 8:00 AM'"
+msgid "Sent {0}"
+msgstr "{0} 发送"
+
+#: frontend/src/metabase/notifications/pulse/subscription-editing.ts
+msgid "Webhook subscriptions can't be edited on the dashboard"
+msgstr "Webhook 订阅不能在仪表板上编辑"

@@ -10,9 +10,14 @@ export const ChannelCard = ({
 }: {
   onClick?: () => void;
   title: string;
-  channel: "email" | "slack";
+  channel: "email" | "slack" | "http";
 }) => {
-  const iconName = channel === "email" ? "mail" : "slack_colorized";
+  const iconName =
+    channel === "email"
+      ? "mail"
+      : channel === "slack"
+        ? "slack_colorized"
+        : "webhook";
 
   return (
     <Paper

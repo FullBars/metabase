@@ -89,11 +89,22 @@ export type EmailChannelSpec = ChannelSpec & {
   recipients: ChannelSpecRecipients;
 };
 
+/** A webhook a dashboard subscription can go to: a Feishu group chat. */
+export type DashboardWebhook = {
+  id: number;
+  name: string;
+};
+
+export type HttpChannelSpec = ChannelSpec & {
+  /** Only for people who manage webhooks. */
+  dashboard_webhooks?: DashboardWebhook[];
+};
+
 export interface ChannelApiResponse {
   channels: {
     email?: EmailChannelSpec;
     slack?: SlackChannelSpec;
-    http?: ChannelSpec;
+    http?: HttpChannelSpec;
   };
 }
 

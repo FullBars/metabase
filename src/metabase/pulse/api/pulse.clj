@@ -8,6 +8,7 @@
    [medley.core :as m]
    [metabase.api.common :as api]
    [metabase.api.macros :as api.macros]
+   [metabase.channel.models.channel :as models.channel]
    [metabase.channel.settings :as channel.settings]
    [metabase.channel.slack :as channel.slack]
    [metabase.classloader.core :as classloader]
@@ -330,7 +331,11 @@
   (let [chan-types (-> pulse-channel/channel-types
                        (assoc-in [:slack :configured] (channel.settings/slack-configured?))
                        (assoc-in [:email :configured] (channel.settings/email-configured?))
-                       (assoc-in [:http :configured] (pulse.db/active-http-channel-exists?)))]
+                       (assoc-in [:http :configured] (pulse.db/active-http-channel-exists?))
+                       ;; the webhooks a dashboard subscription can go to, for whoever manages webhooks: the
+                       ;; dashboard's subscription sidebar offers them, like the alert form offers webhooks
+                       (cond-> (or api/*is-superuser?* (perms/current-user-has-application-permissions? :setting))
+                         (assoc-in [:http :dashboard_webhooks] (models.channel/active-dashboard-webhooks))))]
     {:channels (cond
                  (or (perms/sandboxed-or-impersonated-user?)
                      (some? (:tenant_id @api/*current-user*)))
