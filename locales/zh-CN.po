@@ -46315,10 +46315,6 @@ msgstr "这次没能生成仪表板 PDF，请在 Metabase 中查看。"
 msgid "Filters: {0}"
 msgstr "筛选条件：{0}"
 
-#: frontend/src/metabase/admin/settings/components/widgets/Notifications/WebhookForm.tsx
-msgid "Feishu: a group's custom bot webhook URL receives alerts. To send alerts and dashboard subscriptions (as a PDF) to a group through the Feishu app, use https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id&receive_id= followed by the group's chat ID (oc_…), with no authentication."
-msgstr "飞书：填群自定义机器人的 Webhook 地址，可以接收警报。要用飞书应用往群里发警报和仪表板订阅（PDF），地址填 https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id&receive_id= 后接群 ID（oc_ 开头），认证方式选「无」。"
-
 #: frontend/src/metabase/dashboard/components/DashboardSubscriptionsSidebar/NewPulseSidebar.tsx
 msgid "Send it to a Feishu group"
 msgstr "发到飞书群"
@@ -46336,6 +46332,7 @@ msgid "The group gets a card with the filters and a link, then the whole dashboa
 msgstr "群里会先收到一张卡片（含筛选条件和仪表板链接），再收到整个仪表板的 PDF。"
 
 #: frontend/src/metabase/dashboard/components/DashboardSubscriptionsSidebar/AddEditSidebar/AddEditWebhookSidebar.tsx
+#: frontend/src/metabase/admin/settings/components/widgets/Notifications/WebhookForm.tsx
 msgid "Feishu group"
 msgstr "飞书群"
 
@@ -46366,3 +46363,23 @@ msgstr "{0} 发送"
 #: frontend/src/metabase/notifications/pulse/subscription-editing.ts
 msgid "Webhook subscriptions can't be edited on the dashboard"
 msgstr "Webhook 订阅不能在仪表板上编辑"
+
+#: frontend/src/metabase/admin/settings/components/widgets/Notifications/WebhookForm.tsx
+msgid "Send to"
+msgstr "发到"
+
+#: frontend/src/metabase/admin/settings/components/widgets/Notifications/WebhookForm.tsx
+msgid "Other URL"
+msgstr "其他地址"
+
+#: frontend/src/metabase/admin/settings/components/widgets/Notifications/WebhookForm.tsx
+msgid "Feishu group chat ID"
+msgstr "飞书群 ID"
+
+#: frontend/src/metabase/admin/settings/components/widgets/Notifications/WebhookForm.tsx
+msgid "Add the Feishu app's bot to the group first. The group can get alerts and dashboard subscriptions (as a PDF)."
+msgstr "先把飞书应用的机器人拉进群。这个群能接收警报和仪表板订阅（PDF）。"
+
+#: frontend/src/metabase/admin/settings/components/widgets/Notifications/WebhookForm.tsx
+msgid "Enter the group's chat ID, which starts with oc_"
+msgstr "请填写群 ID（以 oc_ 开头）"

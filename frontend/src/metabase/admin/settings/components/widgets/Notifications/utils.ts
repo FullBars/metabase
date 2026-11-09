@@ -50,3 +50,35 @@ export const channelToForm = ({ details }: NotificationChannel) => {
     return { "auth-info-key": key, "auth-info-value": authInfo[key] };
   }
 };
+
+const FEISHU_CHAT_URL = new URL(
+  "https://open.feishu.cn/open-apis/im/v1/messages",
+);
+
+/**
+ * The webhook URL that sends to the Feishu group chat `chatId` through the
+ * Feishu app in the instance settings (MB_FEISHU_APP_ID / _SECRET).
+ */
+export const feishuChatWebhookUrl = (chatId: string): string => {
+  const url = new URL(FEISHU_CHAT_URL);
+  url.searchParams.set("receive_id_type", "chat_id");
+  url.searchParams.set("receive_id", chatId);
+  return url.toString();
+};
+
+/**
+ * The chat ID of a [[feishuChatWebhookUrl]], or `null` for any other URL,
+ * including the same path on another host, which stays a plain URL.
+ */
+export const getFeishuChatId = (url: string): string | null => {
+  try {
+    const parsed = new URL(url);
+    const isChatUrl =
+      parsed.origin === FEISHU_CHAT_URL.origin &&
+      parsed.pathname === FEISHU_CHAT_URL.pathname &&
+      (parsed.searchParams.get("receive_id_type") ?? "chat_id") === "chat_id";
+    return isChatUrl ? parsed.searchParams.get("receive_id") || null : null;
+  } catch {
+    return null;
+  }
+};

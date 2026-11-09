@@ -1,7 +1,7 @@
 import userEvent from "@testing-library/user-event";
 import fetchMock from "fetch-mock";
 
-import { act, renderWithProviders, screen } from "__support__/ui";
+import { act, renderWithProviders, screen, waitFor } from "__support__/ui";
 
 import { WebhookForm } from "./WebhookForm";
 
@@ -240,5 +240,122 @@ describe("WebhookForm", () => {
     expect(await screen.findByText("Success")).toBeInTheDocument();
     act(() => jest.advanceTimersByTime(4000));
     expect(screen.getByText("Send a test")).toBeInTheDocument();
+  });
+
+  describe("Feishu group", () => {
+    const FEISHU_CHAT_URL =
+      "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id&receive_id=oc_d09effb966cdbc944696268cdea5e56a";
+
+    it("takes just the group's chat ID and submits the Feishu app's URL for it", async () => {
+      const { onSubmit } = await setup();
+
+      await userEvent.click(
+        await screen.findByRole("radio", { name: "Feishu group" }),
+      );
+      expect(screen.queryByLabelText("Webhook URL")).not.toBeInTheDocument();
+      expect(
+        screen.queryByText("Authentication method"),
+      ).not.toBeInTheDocument();
+
+      await userEvent.type(
+        screen.getByLabelText("Feishu group chat ID"),
+        "  oc_d09effb966cdbc944696268cdea5e56a ",
+      );
+      await userEvent.type(screen.getByLabelText("Give it a name"), "运营群");
+      await userEvent.type(screen.getByLabelText("Description"), "日报");
+      await userEvent.click(
+        screen.getByRole("button", { name: "Create destination" }),
+      );
+
+      expect(onSubmit).toHaveBeenCalledWith(
+        {
+          name: "运营群",
+          description: "日报",
+          url: FEISHU_CHAT_URL,
+          "auth-method": "none",
+          "fe-form-type": "none",
+        },
+        expect.anything(),
+      );
+    });
+
+    it("rejects something that isn't a chat ID", async () => {
+      const { onSubmit } = await setup();
+
+      await userEvent.click(
+        await screen.findByRole("radio", { name: "Feishu group" }),
+      );
+      await userEvent.type(
+        screen.getByLabelText("Feishu group chat ID"),
+        "运营群{tab}",
+      );
+
+      expect(
+        await screen.findByText(
+          "Enter the group's chat ID, which starts with oc_",
+        ),
+      ).toBeInTheDocument();
+      expect(onSubmit).not.toHaveBeenCalled();
+    });
+
+    it("opens an existing Feishu group webhook with its chat ID", async () => {
+      await setup({
+        initialValues: {
+          ...INITIAL_FORM_VALUES,
+          url: FEISHU_CHAT_URL,
+          name: "运营群",
+          description: "日报",
+        },
+      });
+
+      expect(
+        await screen.findByRole("radio", { name: "Feishu group" }),
+      ).toBeChecked();
+      expect(screen.getByLabelText("Feishu group chat ID")).toHaveValue(
+        "oc_d09effb966cdbc944696268cdea5e56a",
+      );
+      expect(screen.queryByLabelText("Webhook URL")).not.toBeInTheDocument();
+    });
+
+    it("keeps a Feishu-shaped URL on another host as a plain URL", async () => {
+      const otherHost =
+        "http://host.docker.internal:9997/open-apis/im/v1/messages?receive_id_type=chat_id&receive_id=oc_fake";
+      await setup({
+        initialValues: { ...INITIAL_FORM_VALUES, url: otherHost },
+      });
+
+      expect(await screen.findByLabelText("Webhook URL")).toHaveValue(
+        otherHost,
+      );
+    });
+
+    it("tests the group with the Feishu app's URL", async () => {
+      fetchMock.post("path:/api/channel/test", { ok: true });
+      await setup();
+
+      await userEvent.click(
+        await screen.findByRole("radio", { name: "Feishu group" }),
+      );
+      await userEvent.type(
+        screen.getByLabelText("Feishu group chat ID"),
+        "oc_d09effb966cdbc944696268cdea5e56a",
+      );
+      await userEvent.click(
+        screen.getByRole("button", { name: "Send a test" }),
+      );
+
+      await waitFor(() =>
+        expect(fetchMock.callHistory.called("path:/api/channel/test")).toBe(
+          true,
+        ),
+      );
+      const call = fetchMock.callHistory.lastCall("path:/api/channel/test");
+      const body = await call?.request?.json();
+      expect(body.details).toEqual({
+        url: FEISHU_CHAT_URL,
+        "auth-method": "none",
+        "auth-info": {},
+      });
+    });
   });
 });

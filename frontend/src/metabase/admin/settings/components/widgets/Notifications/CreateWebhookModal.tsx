@@ -62,6 +62,7 @@ export const CreateWebhookModal = ({
         onSubmit={handleSubmit}
         onCancel={onClose}
         initialValues={initialValues}
+        defaultDestinationType="feishu-chat"
       />
     </Modal>
   );

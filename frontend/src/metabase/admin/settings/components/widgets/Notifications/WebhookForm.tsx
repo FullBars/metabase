@@ -33,17 +33,32 @@ import {
   isNotificationChannelTestErrorResponse,
 } from "metabase-types/api";
 
-import { buildAuthInfo } from "./utils";
+import { buildAuthInfo, feishuChatWebhookUrl, getFeishuChatId } from "./utils";
+
+const FEISHU_CHAT_ID_PATTERN = /^oc_[A-Za-z0-9]+$/;
 
 function getValidationSchema() {
   return Yup.object({
-    url: Yup.string()
-      .required(t`Please enter a correctly formatted URL`)
-      .test(
-        "is-http-url",
-        t`Please enter a correctly formatted URL`,
-        (value) => value != null && isValidWebhookUrl(value),
+    url: Yup.string().when("destination-type", {
+      is: "feishu-chat",
+      then: Yup.string(),
+      otherwise: Yup.string()
+        .required(t`Please enter a correctly formatted URL`)
+        .test(
+          "is-http-url",
+          t`Please enter a correctly formatted URL`,
+          (value) => value != null && isValidWebhookUrl(value),
+        ),
+    }),
+    "feishu-chat-id": Yup.string().when("destination-type", {
+      is: "feishu-chat",
+      then: Yup.string().test(
+        "is-chat-id",
+        t`Enter the group's chat ID, which starts with oc_`,
+        (value) => FEISHU_CHAT_ID_PATTERN.test((value ?? "").trim()),
       ),
+      otherwise: Yup.string(),
+    }),
     name: Yup.string().required(t`Please add a name`),
     description: Yup.string().required(t`Please add a description`),
     "auth-method": Yup.string()
@@ -95,7 +110,51 @@ export type WebhookFormProps = {
   "fe-form-type": NotificationAuthType;
 };
 
-type WebhookFormikHelpers = FormikHelpers<WebhookFormProps>;
+/**
+ * Where the webhook goes: a Feishu group chat, entered as just its chat ID and
+ * sent to through the Feishu app, or any other URL.
+ */
+type DestinationType = "feishu-chat" | "url";
+
+type WebhookFormValues = WebhookFormProps & {
+  "destination-type": DestinationType;
+  "feishu-chat-id": string;
+};
+
+type WebhookFormikHelpers = FormikHelpers<WebhookFormValues>;
+
+const toFormValues = (
+  values: WebhookFormProps,
+  defaultDestinationType: DestinationType,
+): WebhookFormValues => {
+  const chatId =
+    values["fe-form-type"] === "none" ? getFeishuChatId(values.url) : null;
+  return {
+    ...values,
+    "destination-type": chatId
+      ? "feishu-chat"
+      : values.url
+        ? "url"
+        : defaultDestinationType,
+    "feishu-chat-id": chatId ?? "",
+  };
+};
+
+/** What the form saves: a Feishu group becomes its URL, without authentication. */
+const fromFormValues = ({
+  "destination-type": destinationType,
+  "feishu-chat-id": chatId,
+  ...values
+}: WebhookFormValues): WebhookFormProps =>
+  destinationType === "feishu-chat"
+    ? {
+        name: values.name,
+        description: values.description,
+        url: feishuChatWebhookUrl(chatId.trim()),
+        "auth-method": "none",
+        "fe-form-type": "none",
+      }
+    : values;
 
 // Helper function to attempt to ensure that any error that comes back
 // is in the shape that our FormSubmit logic expects. This controls
@@ -185,18 +244,47 @@ export const WebhookForm = ({
   onCancel,
   onDelete,
   initialValues,
+  defaultDestinationType = "url",
   submitLabel = t`Create destination`,
 }: {
-  onSubmit: (props: WebhookFormProps) => void;
+  onSubmit: (
+    props: WebhookFormProps,
+    helpers: WebhookFormikHelpers,
+  ) => void | Promise<void>;
   onCancel: () => void;
   onDelete?: () => void;
   initialValues: WebhookFormProps;
+  /** For a new webhook, whose URL is still empty. */
+  defaultDestinationType?: DestinationType;
   submitLabel?: string;
 }) => {
   const { label: testButtonLabel, setLabel: setTestButtonLabel } =
     useActionButtonLabel({ defaultLabel: t`Send a test` });
   const [testChannel, { error }] = useTestChannelMutation();
   const [validationSchema] = useState(getValidationSchema());
+  const formValues = useMemo(
+    () => toFormValues(initialValues, defaultDestinationType),
+    [initialValues, defaultDestinationType],
+  );
+
+  // A Feishu group has no URL field, so its errors go to the chat ID.
+  const errorField = (values: WebhookFormValues) =>
+    values["destination-type"] === "feishu-chat" ? "feishu-chat-id" : "url";
+
+  const handleSubmit = async (
+    values: WebhookFormValues,
+    helpers: WebhookFormikHelpers,
+  ) => {
+    try {
+      await onSubmit(fromFormValues(values), helpers);
+    } catch (e: any) {
+      const urlError = e?.data?.errors?.url;
+      if (urlError && errorField(values) !== "url") {
+        throw { data: { errors: { [errorField(values)]: urlError } } };
+      }
+      throw e;
+    }
+  };
 
   const errorData = useMemo(() => {
     if (isNotificationChannelTestErrorResponse(error)) {
@@ -209,9 +297,11 @@ export const WebhookForm = ({
   );
 
   const handleTest = async (
-    values: WebhookFormProps,
+    formValues: WebhookFormValues,
     setFieldError: WebhookFormikHelpers["setFieldError"],
   ) => {
+    const values = fromFormValues(formValues);
+    const field = errorField(formValues);
     await testChannel({
       details: {
         url: values.url,
@@ -222,22 +312,31 @@ export const WebhookForm = ({
       .unwrap()
       .then(
         () => {
-          setFieldError("url", undefined);
+          setFieldError(field, undefined);
           setTestButtonLabel(t`Success`);
         },
         (e) => {
           setTestButtonLabel(t`Test failed`);
           const message = findErrorMessage(e);
 
-          setFieldError("url", message);
+          setFieldError(field, message);
         },
       );
   };
 
+  const testButton = (
+    values: WebhookFormValues,
+    setFieldError: WebhookFormikHelpers["setFieldError"],
+  ) => (
+    <Button size="lg" onClick={() => handleTest(values, setFieldError)}>
+      {testButtonLabel}
+    </Button>
+  );
+
   return (
     <FormProvider
-      initialValues={initialValues}
-      onSubmit={onSubmit}
+      initialValues={formValues}
+      onSubmit={handleSubmit}
       validationSchema={validationSchema}
     >
       {({ dirty, values, setFieldError, setFieldValue }) => (
@@ -249,26 +348,45 @@ export const WebhookForm = ({
               </ExternalLink>
             )}`}
           </Alert>
-          <Alert size="compact" variant="light" mb="1.5rem">
-            {t`Feishu: a group's custom bot webhook URL receives alerts. To send alerts and dashboard subscriptions (as a PDF) to a group through the Feishu app, use https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id&receive_id= followed by the group's chat ID (oc_…), with no authentication.`}
-          </Alert>
+          <FormChipGroup
+            name="destination-type"
+            label={t`Send to`}
+            groupProps={{ mb: "1.5rem", mt: "0.5rem" }}
+          >
+            <Chip value="feishu-chat" variant="filled">
+              {t`Feishu group`}
+            </Chip>
+            <Chip value="url" variant="filled">
+              {t`Other URL`}
+            </Chip>
+          </FormChipGroup>
           <Box mb="1.5rem">
-            <Flex align="end" gap="1rem">
-              <FormTextInput
-                name="url"
-                label={t`Webhook URL`}
-                placeholder="http://hooks.example.com/hooks/catch/"
-                style={{ flexGrow: 1 }}
-                {...styles}
-                maw="21rem"
-              />
-              <Button
-                size="lg"
-                onClick={() => handleTest(values, setFieldError)}
-              >
-                {testButtonLabel}
-              </Button>
-            </Flex>
+            {values["destination-type"] === "feishu-chat" ? (
+              <Flex align="end" gap="1rem">
+                <FormTextInput
+                  name="feishu-chat-id"
+                  label={t`Feishu group chat ID`}
+                  description={t`Add the Feishu app's bot to the group first. The group can get alerts and dashboard subscriptions (as a PDF).`}
+                  placeholder="oc_…"
+                  style={{ flexGrow: 1 }}
+                  {...styles}
+                  maw="21rem"
+                />
+                {testButton(values, setFieldError)}
+              </Flex>
+            ) : (
+              <Flex align="end" gap="1rem">
+                <FormTextInput
+                  name="url"
+                  label={t`Webhook URL`}
+                  placeholder="http://hooks.example.com/hooks/catch/"
+                  style={{ flexGrow: 1 }}
+                  {...styles}
+                  maw="21rem"
+                />
+                {testButton(values, setFieldError)}
+              </Flex>
+            )}
             {!!errorData && (
               <ScrollArea.Autosize mah={200} mt="0.75rem">
                 <Title order={6} mb="0.75rem" lh="1rem">
@@ -313,33 +431,37 @@ export const WebhookForm = ({
             mb="1.5rem"
             maw="21rem"
           />
-          <FormChipGroup
-            name="fe-form-type"
-            label={t`Authentication method`}
-            groupProps={{ mb: "1.5rem", mt: "0.5rem" }}
-            onChange={(val) => {
-              if (val === "none") {
-                setFieldValue("auth-method", "none");
-              } else {
-                setFieldValue("auth-method", "header");
-              }
-            }}
-          >
-            <Chip value="none" variant="filled">
-              {t`None`}
-            </Chip>
-            <Chip value="basic" variant="filled">
-              {t`Basic`}
-            </Chip>
-            <Chip value="bearer" variant="filled">
-              {t`Bearer`}
-            </Chip>
-            <Chip value="api-key" variant="filled">
-              {t`API Key`}
-            </Chip>
-          </FormChipGroup>
+          {values["destination-type"] === "url" && (
+            <>
+              <FormChipGroup
+                name="fe-form-type"
+                label={t`Authentication method`}
+                groupProps={{ mb: "1.5rem", mt: "0.5rem" }}
+                onChange={(val) => {
+                  if (val === "none") {
+                    setFieldValue("auth-method", "none");
+                  } else {
+                    setFieldValue("auth-method", "header");
+                  }
+                }}
+              >
+                <Chip value="none" variant="filled">
+                  {t`None`}
+                </Chip>
+                <Chip value="basic" variant="filled">
+                  {t`Basic`}
+                </Chip>
+                <Chip value="bearer" variant="filled">
+                  {t`Bearer`}
+                </Chip>
+                <Chip value="api-key" variant="filled">
+                  {t`API Key`}
+                </Chip>
+              </FormChipGroup>
 
-          {renderAuthSection(values["fe-form-type"])}
+              {renderAuthSection(values["fe-form-type"])}
+            </>
+          )}
 
           <Flex
             mt="1.5rem"
