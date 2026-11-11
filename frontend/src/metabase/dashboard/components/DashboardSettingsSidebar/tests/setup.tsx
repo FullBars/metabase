@@ -11,7 +11,7 @@ import { createMockEntitiesState } from "__support__/store";
 import { renderWithProviders, waitForLoaderToBeRemoved } from "__support__/ui";
 import { MockDashboardContext } from "metabase/dashboard/context/mock-context";
 import { Route } from "metabase/router";
-import type { Dashboard, Settings } from "metabase-types/api";
+import type { CacheConfig, Dashboard, Settings } from "metabase-types/api";
 import {
   createMockDashboard,
   createMockSettings,
@@ -26,12 +26,14 @@ export interface SetupOpts {
   dashboard?: Dashboard;
   settings?: Settings;
   enterprisePlugins?: Parameters<typeof setupEnterpriseOnlyPlugin>[0][];
+  cacheConfigs?: CacheConfig[];
 }
 
 export async function setup({
   dashboard = createMockDashboard(),
   settings = createMockSettings(),
   enterprisePlugins = [],
+  cacheConfigs = [],
 }: SetupOpts = {}) {
   const setDashboardAttribute = jest.fn();
   const onClose = jest.fn();
@@ -40,7 +42,7 @@ export async function setup({
   setupDashboardEndpoints(dashboard);
   setupUsersEndpoints([currentUser]);
   setupRevisionsEndpoints([]);
-  setupPerformanceEndpoints([]);
+  setupPerformanceEndpoints(cacheConfigs);
 
   const state = createMockState({
     currentUser,

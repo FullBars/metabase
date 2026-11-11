@@ -10,6 +10,8 @@ import "metabase/utils/i18n";
 import "metabase/ui/colors";
 // NOTE: this loads all builtin plugins
 import "metabase/auth/plugins";
+// Fills PLUGIN_CACHING with the OSS per-database/dashboard/question caching controls
+import "metabase/admin/performance/plugin/register";
 // This is conditionally aliased in the webpack config.
 // If EE isn't enabled, it loads an empty file.
 // Set CSP nonce for dynamic style injection (e.g. CodeMirror)

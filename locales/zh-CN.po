@@ -46383,3 +46383,12 @@ msgstr "先把飞书应用的机器人拉进群。这个群能接收警报和仪
 #: frontend/src/metabase/admin/settings/components/widgets/Notifications/WebhookForm.tsx
 msgid "Enter the group's chat ID, which starts with oc_"
 msgstr "请填写群 ID（以 oc_ 开头）"
+
+#: frontend/src/metabase/admin/performance/components/DatabaseCachingEditor.tsx
+#, javascript-format
+msgid "Default: {0}"
+msgstr "默认：{0}"
+
+#: frontend/src/metabase/admin/performance/components/PreemptiveCachingSwitch.tsx
+msgid "Rerun the query in the background when its cached results expire, so people get fresh results without waiting."
+msgstr "缓存结果过期时在后台重新运行查询，大家无需等待就能看到最新结果。"

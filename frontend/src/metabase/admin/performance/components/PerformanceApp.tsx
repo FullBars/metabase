@@ -8,33 +8,41 @@ import { Outlet } from "metabase/router";
 
 import { getPerformanceTabName } from "../utils";
 
-export const PerformanceApp = () => (
-  <AdminSettingsLayout
-    fullWidth
-    sidebar={
-      <AdminNavWrapper>
-        <AdminNavItem
-          label={getPerformanceTabName(PerformanceTabId.Databases)}
-          path="/admin/performance/databases"
-          icon="database"
-        />
-        {PLUGIN_CACHING.isGranularCachingEnabled() && (
+export const PerformanceApp = () => {
+  const hasDashboardsAndQuestionsTab =
+    PLUGIN_CACHING.isGranularCachingEnabled() &&
+    PLUGIN_CACHING.getTabMetadata().some(
+      ({ tabId }) => tabId === PerformanceTabId.DashboardsAndQuestions,
+    );
+
+  return (
+    <AdminSettingsLayout
+      fullWidth
+      sidebar={
+        <AdminNavWrapper>
           <AdminNavItem
-            label={getPerformanceTabName(
-              PerformanceTabId.DashboardsAndQuestions,
-            )}
-            path="/admin/performance/dashboards-and-questions"
-            icon="dashboard"
+            label={getPerformanceTabName(PerformanceTabId.Databases)}
+            path="/admin/performance/databases"
+            icon="database"
           />
-        )}
-        <AdminNavItem
-          label={getPerformanceTabName(PerformanceTabId.Models)}
-          path="/admin/performance/models"
-          icon="model"
-        />
-      </AdminNavWrapper>
-    }
-  >
-    <Outlet />
-  </AdminSettingsLayout>
-);
+          {hasDashboardsAndQuestionsTab && (
+            <AdminNavItem
+              label={getPerformanceTabName(
+                PerformanceTabId.DashboardsAndQuestions,
+              )}
+              path="/admin/performance/dashboards-and-questions"
+              icon="dashboard"
+            />
+          )}
+          <AdminNavItem
+            label={getPerformanceTabName(PerformanceTabId.Models)}
+            path="/admin/performance/models"
+            icon="model"
+          />
+        </AdminNavWrapper>
+      }
+    >
+      <Outlet />
+    </AdminSettingsLayout>
+  );
+};
