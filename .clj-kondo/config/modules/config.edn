@@ -505,11 +505,9 @@
            lib.schema
            models
            permissions
-           premium-features
            request
            settings
-           util
-           util.config}
+           util}
    :model-exports #{:model/CacheConfig :model/QueryCache}
    :model-imports #{:model/Card
                     :model/Dashboard
@@ -2340,14 +2338,18 @@
            settings
            sync.analyze
            system
+           task
            tracing
            users
            util
            util.config
            warehouse-schema-overlay}
    :model-imports #{:model/Card
+                    :model/Dashboard
+                    :model/DashboardCard
                     :model/DashboardCardSeries
                     :model/Database
+                    :model/Query
                     :model/QueryCache
                     :model/QueryExecution
                     :model/Table}}
@@ -2357,7 +2359,7 @@
    :ns-prefix "metabase.query-processor.middleware.cache-backend"
    :api       #{metabase.query-processor.middleware.cache-backend.db
                 metabase.query-processor.middleware.cache-backend.interface}
-   :uses      #{premium-features query-processor util}}
+   :uses      #{driver premium-features query-processor util}}
 
   query-processor.driver-api
   {:team "Querying Platform"

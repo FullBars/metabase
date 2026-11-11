@@ -9,6 +9,8 @@
   (:require
    [clojure.string :as str]
    [clojure.test :refer :all]
+   [java-time.api :as t]
+   [metabase.cache.models.cache-config :as cache-config]
    [metabase.lib.core :as lib]
    [metabase.lib.metadata :as lib.metadata]
    [metabase.models.interface :as mi]
@@ -23,7 +25,8 @@
    [metabase.query-processor.test-util :as qp.test-util]
    [metabase.test :as mt]
    [metabase.util :as u]
-   [metabase.util.json :as json]))
+   [metabase.util.json :as json]
+   [toucan2.core :as t2]))
 
 (set! *warn-on-reflection* true)
 
@@ -432,3 +435,66 @@
           (is (= (mapv name->id tag-names)
                  (mapv :id result))
               "Parameters should be returned in the same order as card.parameters"))))))
+
+(deftest cache-strategy-precedence-test
+  (testing "a Card's query is cached by the most specific configured level: question > dashboard > database > root"
+    (mt/with-premium-features #{}
+      (mt/with-model-cleanup [:model/CacheConfig]
+        (mt/with-temp [:model/Dashboard {dash-id :id}       {}
+                       :model/Dashboard {other-dash-id :id} {}
+                       :model/Card      card                {:database_id   (mt/id)
+                                                             :dataset_query (mt/native-query {:query "SELECT 1"})}
+                       :model/Card      other-card          {:database_id   (mt/id)
+                                                             :dataset_query (mt/native-query {:query "SELECT 2"})}]
+          (let [config!  (fn [model model-id strategy]
+                           (cache-config/store! (mt/user->id :crowberto)
+                                                {:model model :model_id model-id :strategy strategy}))
+                delete!  (fn [model model-id]
+                           (cache-config/delete! (mt/user->id :crowberto) model [model-id]))
+                strategy (fn [card dashboard-id]
+                           (:cache-strategy (qp.card/query-for-card card nil nil nil {:dashboard-id dashboard-id})))
+                ttl      {:type :ttl :multiplier 10 :min_duration_ms 1000}
+                hour     {:type :duration :duration 1 :unit "hours"}
+                minutes  {:type :duration :duration 5 :unit "minutes"}
+                daily    {:type :schedule :schedule "0 0 11 * * ?"}]
+            (testing "nothing configured: no caching"
+              (is (nil? (strategy card nil)))
+              (is (nil? (strategy card dash-id))))
+            (config! "root" 0 ttl)
+            (testing "root"
+              (is (=? ttl (strategy card nil)))
+              (is (=? ttl (strategy card dash-id))))
+            (config! "database" (mt/id) hour)
+            (testing "the card's database beats root"
+              (is (=? hour (strategy card nil)))
+              (is (=? hour (strategy card dash-id))))
+            (testing "a manual invalidation of the card or of the config is passed along, the latest one winning"
+              (let [earlier (t/offset-date-time "2026-11-11T03:00:00Z")
+                    later   (t/offset-date-time "2026-11-11T04:00:00Z")
+                    card*   (assoc card :cache_invalidated_at earlier)]
+                (is (= (t/instant earlier) (some-> (strategy card* nil) :invalidated-at t/instant)))
+                (t2/update! :model/CacheConfig {:model "database" :model_id (mt/id)} {:invalidated_at later})
+                (is (= (t/instant later) (some-> (strategy card* nil) :invalidated-at t/instant)))
+                (is (= (t/instant later) (some-> (strategy card nil) :invalidated-at t/instant)))))
+            (config! "dashboard" dash-id minutes)
+            (testing "a dashboard applies only when the card runs from that dashboard"
+              (is (=? minutes (strategy card dash-id)))
+              (is (=? hour (strategy card other-dash-id)))
+              (is (=? hour (strategy card nil))))
+            (config! "question" (:id card) daily)
+            (testing "the question beats everything, and applies only to itself"
+              (is (=? daily (strategy card dash-id)))
+              (is (=? daily (strategy card nil)))
+              (is (=? minutes (strategy other-card dash-id))))
+            (config! "question" (:id card) {:type :nocache})
+            (testing "a question's nocache beats the dashboard's duration"
+              (is (= {:type :nocache} (strategy card dash-id))))
+            (testing "deleting a level falls back to the next one"
+              (delete! "question" (:id card))
+              (is (=? minutes (strategy card dash-id)))
+              (delete! "dashboard" dash-id)
+              (is (=? hour (strategy card dash-id)))
+              (delete! "database" (mt/id))
+              (is (=? ttl (strategy card dash-id)))
+              (delete! "root" 0)
+              (is (nil? (strategy card dash-id))))))))))

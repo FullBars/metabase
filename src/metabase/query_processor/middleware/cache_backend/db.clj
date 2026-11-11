@@ -1,14 +1,21 @@
 (ns metabase.query-processor.middleware.cache-backend.db
+  (:refer-clojure :exclude [mapv some])
   (:require
    [java-time.api :as t]
+   [metabase.driver :as driver]
    [metabase.premium-features.core :refer [defenterprise]]
    [metabase.query-processor.db :as query-processor.db]
    [metabase.query-processor.middleware.cache-backend.interface :as i]
+   [metabase.query-processor.timezone :as qp.timezone]
    [metabase.util.date-2 :as u.date]
    [metabase.util.encryption :as encryption]
-   [metabase.util.log :as log])
+   [metabase.util.log :as log]
+   [metabase.util.performance :refer [mapv some]])
   (:import
-   (java.io ByteArrayInputStream)))
+   (java.io ByteArrayInputStream)
+   (java.time Instant)
+   (java.util Date TimeZone)
+   (org.quartz CronExpression)))
 
 (set! *warn-on-reflection* true)
 
@@ -47,6 +54,45 @@
                                      :updated-at (:updated_at row)})
                                   query-hash))
 
+(defn- schedule-cron-expression
+  "`schedule` (a Quartz cron string) read in the report timezone, or the system timezone when there is none -- the
+  timezone people mean when they pick \"daily at 11:00\", as for model persistence schedules."
+  ^CronExpression [^String schedule]
+  (doto (CronExpression. schedule)
+    (.setTimeZone (TimeZone/getTimeZone ^String (or (driver/report-timezone)
+                                                    (qp.timezone/system-timezone-id)
+                                                    "UTC")))))
+
+(def ^:private schedule-lookback-ms
+  "How far back to look for a schedule's last firing, shortest first, so a frequent schedule is found in a short window
+  and stepping through its firings stays cheap."
+  (mapv #(* 1000 %) [60 (* 60 60) (* 24 60 60) (* 7 24 60 60) (* 32 24 60 60) (* 367 24 60 60) (* 5 367 24 60 60)]))
+
+(defn schedule-previous-fire-time
+  "The latest instant at or before `instant` at which the Quartz cron `schedule` fires (see
+  [[schedule-cron-expression]] for its timezone), or nil if it hasn't fired in the last five years."
+  [schedule instant]
+  (let [cron   (schedule-cron-expression schedule)
+        now    (Date/from (t/instant instant))
+        now-ms (.getTime now)
+        after  (fn ^Date [^Date d] (.getNextValidTimeAfter cron d))]
+    (some (fn [window-ms]
+            (when-let [^Date first-fire (after (Date. (- now-ms (long window-ms))))]
+              (when-not (.after first-fire now)
+                (loop [^Date fire first-fire]
+                  (let [^Date next-fire (after fire)]
+                    (if (and next-fire (not (.after next-fire now)))
+                      (recur next-fire)
+                      (.toInstant fire)))))))
+          schedule-lookback-ms)))
+
+(defn schedule-next-fire-time
+  "The first instant strictly after `instant` at which the Quartz cron `schedule` fires (see
+  [[schedule-cron-expression]] for its timezone), or nil if it never fires again."
+  [schedule instant]
+  (some-> (.getNextValidTimeAfter (schedule-cron-expression schedule) (Date/from (t/instant instant)))
+          .toInstant))
+
 (defn invalidated-at-ttl
   "Freshness boundary for a `:ttl` strategy: cache entries with `updated_at` older than this are stale. Returns nil when
   the strategy is missing `:avg-execution-ms` (so a TTL can't be computed and nothing should be served from cache)."
@@ -58,14 +104,28 @@
         (t/max boundary invalidated-at)
         boundary))))
 
+(defn- latest-of
+  "The later of `boundary` and `invalidated-at` (a manual invalidation, nil when there was none), as an Instant: the
+  two can be different kinds of temporal (an Instant computed here, an OffsetDateTime read from the app DB)."
+  [boundary invalidated-at]
+  (cond-> (t/instant boundary)
+    invalidated-at (t/max (t/instant invalidated-at))))
+
 (defenterprise strategy->invalidated-at
   "Freshness boundary timestamp for `strategy`: cache entries with `updated_at` strictly older than this are stale and
-  must be refreshed. Returns nil when nothing can be served from cache for this strategy (e.g. on OSS for a non-`:ttl`
-  strategy). EE overrides this to also handle `:duration` and `:schedule`."
+  must be refreshed. For `:duration` it's that long ago, for `:schedule` the last time the schedule ran (the epoch when
+  it hasn't run yet), moved forward to the strategy's `:invalidated-at` when that is later. Returns nil when nothing
+  can be served from cache for this strategy (`:nocache`, or an unknown type)."
   metabase-enterprise.cache.strategies
-  [strategy]
-  (when (= :ttl (:type strategy))
-    (invalidated-at-ttl strategy)))
+  [{:keys [invalidated-at] :as strategy}]
+  (case (:type strategy)
+    :ttl      (invalidated-at-ttl strategy)
+    :duration (latest-of (t/minus (t/instant) (t/duration (long (:duration strategy)) (keyword (:unit strategy))))
+                         invalidated-at)
+    :schedule (latest-of (or (schedule-previous-fire-time (:schedule strategy) (t/instant))
+                             Instant/EPOCH)
+                         invalidated-at)
+    nil))
 
 (def ^:private lease-free-sentinel
   "Substituted (via COALESCE) for a NULL `refresh_started_at` so that 'no refresh in progress' counts as a free lease.

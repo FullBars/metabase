@@ -40,6 +40,22 @@
   [pk :- ms/PositiveInt]
   (t2/select-one :model/CacheConfig pk))
 
+(mu/defn applicable-cache-configs
+  "The CacheConfigs that could apply to a query of the Card with `card-id`, whose Database is `database-id`, run from
+  the Dashboard with `dashboard-id` (nil when it isn't run from a Dashboard): the Card's own, the Dashboard's, the
+  Database's, and the root one, whichever exist."
+  [card-id      :- [:maybe ::lib.schema.id/card]
+   database-id  :- [:maybe ::lib.schema.id/database]
+   dashboard-id :- [:maybe ::lib.schema.id/dashboard]]
+  (t2/select :model/CacheConfig
+             {:where (into [:or [:and [:= :model "root"] [:= :model_id 0]]]
+                           (keep (fn [[model model-id]]
+                                   (when model-id
+                                     [:and [:= :model model] [:= :model_id model-id]])))
+                           [["question" card-id]
+                            ["dashboard" dashboard-id]
+                            ["database" database-id]])}))
+
 (mu/defn root-ttl-cache-config
   "The root TTL CacheConfig, or nil."
   []
@@ -122,7 +138,8 @@
   "Insert or replace the CacheConfig for `model` and `model-id` with `data`, returning its ID."
   [model    :- :string
    model-id :- ms/IntGreaterThanOrEqualToZero
-   data     :- (mut/select-keys ::cache.schema/cache-config.update [:model :model_id :strategy :config :refresh_automatically])]
+   data     :- (mut/select-keys ::cache.schema/cache-config.update [:model :model_id :strategy :config :refresh_automatically
+                                                                    :next_run_at])]
   (app-db/update-or-insert! :model/CacheConfig {:model model :model_id model-id}
                             (constantly data)))
 
@@ -168,3 +185,28 @@
   "Whether any CacheConfig exists."
   []
   (t2/exists? :model/CacheConfig))
+
+(mu/defn refresh-cache-configs-due
+  "The question and dashboard CacheConfigs with `refresh_automatically` on that are due: a `:duration` one whose
+  `next_run_at` is unset or no later than `duration-due-by`, a `:schedule` one whose `next_run_at` is unset or no later
+  than `schedule-due-by`."
+  [duration-due-by :- ms/TemporalInstant
+   schedule-due-by :- ms/TemporalInstant]
+  (t2/select :model/CacheConfig
+             {:where    [:and
+                         [:= :refresh_automatically true]
+                         [:in :model ["question" "dashboard"]]
+                         [:or
+                          [:and [:= :strategy "duration"]
+                           [:or [:= :next_run_at nil] [:<= :next_run_at duration-due-by]]]
+                          [:and [:= :strategy "schedule"]
+                           [:or [:= :next_run_at nil] [:<= :next_run_at schedule-due-by]]]]]
+              :order-by [[:id :asc]]}))
+
+(mu/defn set-cache-config-next-run-at!
+  "Set `next_run_at` of the CacheConfig with `id` to `next-run-at`, without touching `updated_at`, returning the number
+  updated."
+  [id          :- ms/PositiveInt
+   next-run-at :- [:maybe ms/TemporalInstant]]
+  (t2/update! :model/CacheConfig id {:next_run_at next-run-at
+                                     :updated_at  :updated_at}))

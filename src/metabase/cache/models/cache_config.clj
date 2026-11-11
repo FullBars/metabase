@@ -126,6 +126,18 @@
                           :authority_level (:collection_authority_level row)
                           :type            (:collection_type row)}))))
 
+(def ^:private model-precedence
+  "Which CacheConfig wins when several apply to a query, first to last."
+  ["question" "dashboard" "database" "root"])
+
+(defn effective-config
+  "The CacheConfig that governs a query of the Card with `card-id` (in Database `database-id`), run from the Dashboard
+  with `dashboard-id` when there is one: the first configured of the Card, the Dashboard, the Database, and the root.
+  A `:nocache` config counts, so it stops the lookup. Nil when nothing is configured."
+  [{:keys [card-id database-id dashboard-id]}]
+  (let [by-model (m/index-by :model (cache.db/applicable-cache-configs card-id database-id dashboard-id))]
+    (some by-model model-precedence)))
+
 (defn card-strategy
   "Shapes `row` into strategy for a given `card`."
   [row card]
@@ -171,7 +183,8 @@
   (t2/with-transaction [_tx]
     (let [data    (config->row config)
           current (cache.db/lock-cache-config model model_id)]
-      (u/prog1 (cache.db/upsert-cache-config! model model_id data)
+      ;; due at the next automatic refresh round, whatever was due under the policy it replaces
+      (u/prog1 (cache.db/upsert-cache-config! model model_id (assoc data :next_run_at nil))
         (audit-caching-change! user-id <> current data)))))
 
 (defn delete!
@@ -216,3 +229,17 @@
   (if with-overrides?
     (invalidate-cards databases dashboards questions)
     (invalidate-cache-configs databases dashboards questions)))
+
+;;; Refresh cache automatically
+
+(defn cache-configs-due-for-refresh
+  "The question and dashboard CacheConfigs with \"Refresh cache automatically\" on whose results are due to be cached
+  again: those not refreshed yet, the `:duration` ones expiring no later than `duration-due-by`, and the `:schedule`
+  ones whose schedule fired no later than `schedule-due-by`."
+  [duration-due-by schedule-due-by]
+  (cache.db/refresh-cache-configs-due duration-due-by schedule-due-by))
+
+(defn set-next-refresh!
+  "Record that the CacheConfig with `id` is next due to be refreshed at `next-run-at`."
+  [id next-run-at]
+  (cache.db/set-cache-config-next-run-at! id next-run-at))

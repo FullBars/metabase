@@ -12,9 +12,15 @@
 (p/import-vars
  [metabase.cache.models.cache-config
   card-strategy
+  effective-config
   root-strategy]
  [metabase.cache.settings
   enable-query-caching
   query-caching-early-refresh-ratio
   query-caching-max-kb
   query-caching-max-ttl])
+
+(p/import-vars
+ [metabase.cache.models.cache-config
+  cache-configs-due-for-refresh
+  set-next-refresh!])

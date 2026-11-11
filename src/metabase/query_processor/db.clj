@@ -96,3 +96,60 @@
                             (constantly {:updated_at         timestamp
                                          :results            results
                                          :refresh_started_at nil})))
+
+(mu/defn unarchived-card
+  "The Card with `card-id` unless it's archived, or nil."
+  [card-id :- ::lib.schema.id/card]
+  (t2/select-one :model/Card :id card-id :archived false))
+
+(mu/defn unarchived-dashboard
+  "The Dashboard with `dashboard-id` unless it's archived, or nil."
+  [dashboard-id :- ::lib.schema.id/dashboard]
+  (t2/select-one :model/Dashboard :id dashboard-id :archived false))
+
+(mu/defn card-dashcards
+  "The DashboardCards of the Dashboard with `dashboard-id` that show a Card (not an action, text, heading or link),
+  oldest first."
+  [dashboard-id :- ::lib.schema.id/dashboard]
+  (t2/select :model/DashboardCard :dashboard_id dashboard-id :card_id [:not= nil] :action_id nil
+             {:order-by [[:id :asc]]}))
+
+(mu/defn dashcards-series
+  "The `:dashboardcard_id` and `:card_id` of the series of the DashboardCards with `dashcard-ids`, in position order."
+  [dashcard-ids :- [:sequential ::lib.schema.id/dashcard]]
+  (t2/select [:model/DashboardCardSeries :dashboardcard_id :card_id] :dashboardcard_id [:in dashcard-ids]
+             {:order-by [[:position :asc]]}))
+
+(mu/defn card-dashboard-ids
+  "The ids of the Dashboards that show the Card with `card-id`, on a DashboardCard or as a DashboardCard's series."
+  [card-id :- ::lib.schema.id/card]
+  (let [series-dashcard-ids (t2/select-fn-set :dashboardcard_id :model/DashboardCardSeries :card_id card-id)]
+    (into (set (t2/select-fn-set :dashboard_id :model/DashboardCard :card_id card-id))
+          (when (seq series-dashcard-ids)
+            (t2/select-fn-set :dashboard_id :model/DashboardCard :id [:in series-dashcard-ids])))))
+
+(mu/defn most-run-query-hashes
+  "The `:hash` and number of `:runs` of the queries of the Card with `card-id` that ran without error in `context`
+  from the Dashboard with `dashboard-id` (outside any Dashboard when nil) since `since`, most run first, at most
+  `limit` of them."
+  [card-id      :- ::lib.schema.id/card
+   dashboard-id :- [:maybe ::lib.schema.id/dashboard]
+   context      :- :keyword
+   since        :- Temporal
+   limit        :- pos-int?]
+  (t2/query {:select   [:hash [[:count :*] :runs]]
+             :from     [(t2/table-name :model/QueryExecution)]
+             :where    [:and
+                        [:= :card_id card-id]
+                        [:= :dashboard_id dashboard-id]
+                        [:= :context (name context)]
+                        [:= :error nil]
+                        [:>= :started_at since]]
+             :group-by [:hash]
+             :order-by [[:runs :desc]]
+             :limit    limit}))
+
+(mu/defn stored-query
+  "The query the Query model stores for `query-hash`, or nil."
+  [query-hash :- bytes?]
+  (t2/select-one-fn :query :model/Query :query_hash query-hash))

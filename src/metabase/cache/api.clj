@@ -4,11 +4,9 @@
    [metabase.api.macros :as api.macros]
    [metabase.cache.db :as cache.db]
    [metabase.cache.models.cache-config :as cache-config]
-   [metabase.config.core :as config]
    [metabase.lib.schema :as lib.schema]
    [metabase.lib.schema.common :as lib.schema.common]
    [metabase.models.interface :as mi]
-   [metabase.premium-features.core :as premium-features]
    [metabase.request.core :as request]
    [metabase.util.cron :as u.cron]
    [metabase.util.i18n :refer [deferred-tru tru trun]]
@@ -43,17 +41,6 @@
     [:multiplier      ms/PositiveInt]
     [:min_duration_ms ms/IntGreaterThanOrEqualToZero]]])
 
-(mr/def ::cache-strategy.oss
-  "Schema for a caching strategy (OSS)"
-  [:multi {:description      (deferred-tru "cache strategy :type must be one of :nocache, :ttl")
-           :decode/normalize lib.schema.common/normalize-map-no-kebab-case
-           :dispatch         cache-strategy-dispatch
-           :error/fn    (fn [{:keys [value]} _]
-                          (tru "invalid cache strategy :type {0}, must be one of :nocache, :ttl"
-                               (pr-str (:type value))))}
-   [:nocache ::cache-strategy.nocache]
-   [:ttl     ::cache-strategy.ttl]])
-
 (mr/def ::cache-strategy.ee.duration
   "[[::lib.schema/cache-strategy.duration]] as it may be configured: a whole number of units."
   [:merge
@@ -68,10 +55,8 @@
    [:map {:closed true}
     [:schedule u.cron/CronScheduleString]]])
 
-;;; This is basically the same schema as `:metabase-enterprise.cache.strategies/cache-strategy` except it doesn't have
-;;; the optional `:invalidated-at` keys
-(mr/def ::cache-strategy.ee
-  "Schema for a caching strategy in EE when we have an premium token with `:cache-granular-controls`."
+(mr/def ::cache-strategy
+  "Schema for a caching strategy, as it may be configured for any model."
   [:multi {:description      (deferred-tru "cache strategy :type must be one of :nocache, :ttl, :duration, :schedule")
            :decode/normalize lib.schema.common/normalize-map-no-kebab-case
            :dispatch         cache-strategy-dispatch
@@ -83,28 +68,11 @@
    [:duration    ::cache-strategy.ee.duration]
    [:schedule    ::cache-strategy.ee.schedule]])
 
-(mr/def ::cache-strategy
-  (if config/ee-available?
-    [:multi
-     {:dispatch (fn [_value]
-                  (if (premium-features/has-feature? :cache-granular-controls)
-                    :ee
-                    :oss))}
-     [:ee  ::cache-strategy.ee]
-     [:oss ::cache-strategy.oss]]
-    ::cache-strategy.oss))
-
-(defn- assert-valid-models [model ids premium?]
-  (cond
-    (= model "root")
+(defn- assert-valid-models [model ids]
+  (if (= model "root")
     (when-not (some zero? ids)
       (throw (ex-info (tru "Root configuration is only valid with model_id = 0") {:status-code 404
                                                                                   :model_id    (first ids)})))
-
-    (not premium?)
-    (throw (premium-features/ee-feature-error (tru "Granular Caching")))
-
-    :else
     (api/check-404 (case model
                      "database"  (cache.db/database-with-ids ids)
                      "dashboard" (cache.db/dashboard-with-ids ids)
@@ -164,10 +132,8 @@
         [:id         {:optional true} (mu/with [:maybe ms/PositiveInt]
                                                {:description "Model id to get configuration for."})]]
        cache-config/SortParams]]
-  (when (and (not (premium-features/enable-cache-granular-controls?))
-             (not= model ["root"]))
-    (throw (premium-features/ee-feature-error (tru "Granular Caching"))))
-  (check-cache-access (first model) id)
+  (doseq [m model]
+    (check-cache-access m id))
   (let [sort-params (select-keys params [:sort_column :sort_direction])
         limit       (request/limit)
         offset      (request/offset)
@@ -187,7 +153,7 @@
                                            [:model    cache-config/CachingModel]
                                            [:model_id ms/IntGreaterThanOrEqualToZero]
                                            [:strategy ::cache-strategy]]]
-  (assert-valid-models model [model_id] (premium-features/enable-cache-granular-controls?))
+  (assert-valid-models model [model_id])
   (check-cache-access model model_id)
   {:id (cache-config/store! api/*current-user-id* config)})
 
@@ -198,7 +164,7 @@
    {:keys [model model_id]} :- [:map {:closed true}
                                 [:model    cache-config/CachingModel]
                                 [:model_id (ms/QueryVectorOf ms/IntGreaterThanOrEqualToZero)]]]
-  (assert-valid-models model model_id (premium-features/enable-cache-granular-controls?))
+  (assert-valid-models model model_id)
   (doseq [id model_id] (check-cache-access model id))
   (cache-config/delete! api/*current-user-id* model model_id)
   nil)
@@ -222,8 +188,6 @@
                                      (ms/QueryVectorOf ms/IntGreaterThanOrEqualToZero)]]
        [:question  {:optional true} [:maybe {:description "A list of question ids"}
                                      (ms/QueryVectorOf ms/IntGreaterThanOrEqualToZero)]]]]
-  (when-not (premium-features/enable-cache-granular-controls?)
-    (throw (premium-features/ee-feature-error (tru "Granular Caching"))))
   ;; Require at least one target. Without a filter there is nothing to invalidate, so the request is
   ;; malformed rather than not-found: returning 404 here misled callers into thinking the endpoint
   ;; itself did not exist (see #66499), and a 200 would falsely imply something was invalidated.

@@ -227,7 +227,9 @@
                       :attributes {:dashboard/id dashboard-id
                                    :dashcard/id  dashcard-id
                                    :card/id      card-id}}
-      (events/publish-event! :event/dashboard-queried {:object-id dashboard-id :user-id api/*current-user-id*})
+      ;; a cache refresh is nobody viewing the dashboard
+      (when-not (= :cache-refresh (:context options))
+        (events/publish-event! :event/dashboard-queried {:object-id dashboard-id :user-id api/*current-user-id*}))
       ;; make sure we can read this Dashboard. Card will get read-checked later on inside
       ;; [[qp.card/process-query-for-card]]
       (api/read-check dashboard)
